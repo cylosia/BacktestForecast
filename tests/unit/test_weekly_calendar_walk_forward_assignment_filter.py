@@ -542,6 +542,149 @@ def test_parse_args_defaults_to_earnings_blackout_10_before_and_after(monkeypatc
     assert args.avoid_earnings_days_after == 10
 
 
+def test_build_analog_strike_fit_metrics_reports_median_and_band_pass(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        walk_forward,
+        "_ANALOG_STRIKE_FIT_FORECASTER",
+        SimpleNamespace(
+            forecast=lambda **_: SimpleNamespace(
+                expected_return_low_pct=Decimal("-2.0"),
+                expected_return_median_pct=Decimal("1.0"),
+                expected_return_high_pct=Decimal("3.0"),
+            )
+        ),
+    )
+    trade = SimpleNamespace(
+        entry_date=date(2026, 1, 2),
+        entry_underlying_close=100.0,
+        detail_json={
+            "legs": [
+                {
+                    "side": "short",
+                    "strike_price": 102.0,
+                    "expiration_date": "2026-01-09",
+                }
+            ]
+        },
+    )
+
+    metrics = walk_forward._build_analog_strike_fit_metrics(
+        symbol="AAA",
+        strategy_type="calendar_spread",
+        bars=[SimpleNamespace(trade_date=date(2026, 1, 2))],
+        trade=trade,
+        analog_strike_fit_max_distance_pct=2.0,
+        analog_strike_fit_band_padding_pct=0.0,
+        analog_strike_fit_max_band_width_pct=None,
+    )
+
+    assert metrics["analog_forecast_available"] is True
+    assert metrics["analog_projected_low_underlying_price"] == 98.0
+    assert metrics["analog_projected_underlying_price"] == 101.0
+    assert metrics["analog_projected_high_underlying_price"] == 103.0
+    assert metrics["analog_projected_strike_distance_pct"] == 1.0
+    assert metrics["analog_median_strike_fit_passed"] is True
+    assert metrics["analog_projected_band_lower_price"] == 98.0
+    assert metrics["analog_projected_band_upper_price"] == 103.0
+    assert metrics["analog_projected_band_gap_pct"] == 0.0
+    assert metrics["analog_band_strike_fit_passed"] is True
+    assert metrics["analog_strike_fit_passed"] is True
+
+
+def test_build_analog_strike_fit_metrics_can_fail_band_even_when_median_distance_passes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        walk_forward,
+        "_ANALOG_STRIKE_FIT_FORECASTER",
+        SimpleNamespace(
+            forecast=lambda **_: SimpleNamespace(
+                expected_return_low_pct=Decimal("-2.0"),
+                expected_return_median_pct=Decimal("-1.0"),
+                expected_return_high_pct=Decimal("0.0"),
+            )
+        ),
+    )
+    trade = SimpleNamespace(
+        entry_date=date(2026, 1, 2),
+        entry_underlying_close=100.0,
+        detail_json={
+            "legs": [
+                {
+                    "side": "short",
+                    "strike_price": 101.5,
+                    "expiration_date": "2026-01-09",
+                }
+            ]
+        },
+    )
+
+    metrics = walk_forward._build_analog_strike_fit_metrics(
+        symbol="AAA",
+        strategy_type="calendar_spread",
+        bars=[SimpleNamespace(trade_date=date(2026, 1, 2))],
+        trade=trade,
+        analog_strike_fit_max_distance_pct=3.0,
+        analog_strike_fit_band_padding_pct=0.0,
+        analog_strike_fit_max_band_width_pct=None,
+    )
+
+    assert metrics["analog_median_strike_fit_passed"] is True
+    assert metrics["analog_projected_band_lower_price"] == 98.0
+    assert metrics["analog_projected_band_upper_price"] == 100.0
+    assert metrics["analog_projected_band_gap_pct"] == 1.5
+    assert metrics["analog_band_strike_fit_passed"] is False
+    assert metrics["analog_strike_fit_passed"] is False
+
+
+def test_build_analog_strike_fit_metrics_skips_band_filter_when_forecast_band_is_too_wide(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        walk_forward,
+        "_ANALOG_STRIKE_FIT_FORECASTER",
+        SimpleNamespace(
+            forecast=lambda **_: SimpleNamespace(
+                expected_return_low_pct=Decimal("-8.0"),
+                expected_return_median_pct=Decimal("-1.0"),
+                expected_return_high_pct=Decimal("8.0"),
+            )
+        ),
+    )
+    trade = SimpleNamespace(
+        entry_date=date(2026, 1, 2),
+        entry_underlying_close=100.0,
+        detail_json={
+            "legs": [
+                {
+                    "side": "short",
+                    "strike_price": 112.0,
+                    "expiration_date": "2026-01-09",
+                }
+            ]
+        },
+    )
+
+    metrics = walk_forward._build_analog_strike_fit_metrics(
+        symbol="AAA",
+        strategy_type="calendar_spread",
+        bars=[SimpleNamespace(trade_date=date(2026, 1, 2))],
+        trade=trade,
+        analog_strike_fit_max_distance_pct=None,
+        analog_strike_fit_band_padding_pct=0.0,
+        analog_strike_fit_max_band_width_pct=10.0,
+    )
+
+    assert metrics["analog_projected_band_width_pct"] == 16.0
+    assert metrics["analog_band_width_threshold_pct"] == 10.0
+    assert metrics["analog_band_width_confidence_passed"] is False
+    assert metrics["analog_band_filter_applied"] is False
+    assert metrics["analog_band_strike_fit_passed"] is False
+    assert metrics["analog_strike_fit_passed"] is True
+
+
 def test_install_assignment_exit_ignore_filter_suppresses_selected_reasons(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -678,4 +821,33 @@ def test_default_output_prefix_includes_runtime_override_suffixes(monkeypatch: p
         root
         / "logs"
         / "weekly_calendar_policy_walk_forward_top22_train20251231_q1_2026_ignoreassign_call_ex_div__put_deep_itm"
+    )
+    assert walk_forward._default_output_prefix(
+        top_k=22,
+        stop_loss_pct=None,
+        min_spot_price=None,
+        avoid_earnings_days_before=0,
+        avoid_earnings_days_after=0,
+        ignored_assignment_exit_reasons=(),
+        analog_strike_fit_max_distance_pct=2.0,
+        analog_strike_fit_band_padding_pct=0.5,
+    ) == (
+        root
+        / "logs"
+        / "weekly_calendar_policy_walk_forward_top22_train20251231_q1_2026_analogstrikefit2_analogstrikeband0p5"
+    )
+    assert walk_forward._default_output_prefix(
+        top_k=22,
+        stop_loss_pct=None,
+        min_spot_price=None,
+        avoid_earnings_days_before=0,
+        avoid_earnings_days_after=0,
+        ignored_assignment_exit_reasons=(),
+        analog_strike_fit_max_distance_pct=None,
+        analog_strike_fit_band_padding_pct=0.5,
+        analog_strike_fit_max_band_width_pct=10.0,
+    ) == (
+        root
+        / "logs"
+        / "weekly_calendar_policy_walk_forward_top22_train20251231_q1_2026_analogstrikeband0p5_analogbandwidth10"
     )

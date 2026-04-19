@@ -20,6 +20,7 @@ ROOT = bootstrap_repo(load_api_env=True)
 from backtestforecast.backtests.engine import OptionsBacktestEngine  # noqa: E402
 import backtestforecast.backtests.engine as engine_module  # noqa: E402
 from backtestforecast.db.session import create_readonly_session, create_session  # noqa: E402
+from backtestforecast.forecasts.analog import HistoricalAnalogForecaster  # noqa: E402
 from backtestforecast.market_data.historical_store import HistoricalMarketDataStore  # noqa: E402
 from backtestforecast.models import HistoricalUnderlyingDayBar  # noqa: E402
 from backtestforecast.schemas.backtests import AvoidEarningsRule  # noqa: E402
@@ -67,6 +68,7 @@ DEFAULT_STABILITY_MIN_P25_MONTHLY_MEDIAN_ROI_PCT = 25.0
 DEFAULT_AVOID_EARNINGS_DAYS_BEFORE = 10
 DEFAULT_AVOID_EARNINGS_DAYS_AFTER = 10
 _ORIGINAL_CHECK_EARLY_ASSIGNMENT = OptionsBacktestEngine._check_early_assignment.__func__
+_ANALOG_STRIKE_FIT_FORECASTER = HistoricalAnalogForecaster()
 
 
 def _parse_args() -> argparse.Namespace:
@@ -216,6 +218,35 @@ def _parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--analog-strike-fit-max-distance-pct",
+        type=float,
+        help=(
+            "Optional replay-only calendar-shape filter. Uses the historical-analog median expected "
+            "underlying price into the selected short-leg expiration and skips trades whose projected "
+            "spot is farther than this percent of entry spot from the selected short strike."
+        ),
+    )
+    parser.add_argument(
+        "--analog-strike-fit-band-padding-pct",
+        type=float,
+        help=(
+            "Optional replay-only calendar-shape filter. Uses the historical-analog low/high expected "
+            "underlying-price band into the selected short-leg expiration and requires the selected "
+            "short strike to sit inside that projected band, widened by this percent of entry spot on "
+            "each side. Set to 0 for strict band membership."
+        ),
+    )
+    parser.add_argument(
+        "--analog-strike-fit-max-band-width-pct",
+        type=float,
+        help=(
+            "Optional confidence gate for the replay-only analog low/high band strike-fit filter. "
+            "When set, the band filter is enforced only if the unpadded projected low/high price band "
+            "width is at most this percent of entry spot. Wider bands are treated as low-confidence "
+            "and do not block the trade."
+        ),
+    )
+    parser.add_argument(
         "--output-prefix",
         type=Path,
         help="Optional output prefix. Defaults to logs/weekly_calendar_policy_walk_forward_topK_trainYYYYMMDD_q1_2026",
@@ -259,6 +290,24 @@ def _format_avoid_earnings_suffix(
     return f"_earningsb{avoid_earnings_days_before}a{avoid_earnings_days_after}"
 
 
+def _format_analog_strike_fit_suffix(analog_strike_fit_max_distance_pct: float | None) -> str:
+    if analog_strike_fit_max_distance_pct is None:
+        return ""
+    return f"_analogstrikefit{_format_numeric_suffix(analog_strike_fit_max_distance_pct)}"
+
+
+def _format_analog_strike_band_suffix(analog_strike_fit_band_padding_pct: float | None) -> str:
+    if analog_strike_fit_band_padding_pct is None:
+        return ""
+    return f"_analogstrikeband{_format_numeric_suffix(analog_strike_fit_band_padding_pct)}"
+
+
+def _format_analog_strike_band_width_suffix(analog_strike_fit_max_band_width_pct: float | None) -> str:
+    if analog_strike_fit_max_band_width_pct is None:
+        return ""
+    return f"_analogbandwidth{_format_numeric_suffix(analog_strike_fit_max_band_width_pct)}"
+
+
 def _default_output_prefix(
     *,
     top_k: int,
@@ -267,6 +316,9 @@ def _default_output_prefix(
     avoid_earnings_days_before: int,
     avoid_earnings_days_after: int,
     ignored_assignment_exit_reasons: tuple[str, ...],
+    analog_strike_fit_max_distance_pct: float | None = None,
+    analog_strike_fit_band_padding_pct: float | None = None,
+    analog_strike_fit_max_band_width_pct: float | None = None,
 ) -> Path:
     stop_loss_suffix = ""
     if stop_loss_pct is not None:
@@ -279,11 +331,17 @@ def _default_output_prefix(
         avoid_earnings_days_after,
     )
     ignore_assignment_suffix = _format_assignment_exit_reason_suffix(ignored_assignment_exit_reasons)
+    analog_strike_fit_suffix = _format_analog_strike_fit_suffix(analog_strike_fit_max_distance_pct)
+    analog_strike_band_suffix = _format_analog_strike_band_suffix(analog_strike_fit_band_padding_pct)
+    analog_strike_band_width_suffix = _format_analog_strike_band_width_suffix(
+        analog_strike_fit_max_band_width_pct
+    )
     return (
         ROOT
         / "logs"
         / f"weekly_calendar_policy_walk_forward_top{top_k}_train20251231_q1_2026"
         f"{stop_loss_suffix}{min_spot_suffix}{earnings_suffix}{ignore_assignment_suffix}"
+        f"{analog_strike_fit_suffix}{analog_strike_band_suffix}{analog_strike_band_width_suffix}"
     )
 
 
@@ -923,6 +981,203 @@ def _apply_spot_price_filter(
     }
 
 
+def _extract_short_leg_forecast_inputs(trade: object) -> dict[str, object]:
+    detail_json = getattr(trade, "detail_json", {}) or {}
+    legs = detail_json.get("legs")
+    if not isinstance(legs, list):
+        return {}
+    short_leg = next(
+        (
+            leg for leg in legs
+            if isinstance(leg, dict) and str(leg.get("side") or "").strip().lower() == "short"
+        ),
+        None,
+    )
+    if short_leg is None:
+        return {}
+    strike_price = _safe_float(short_leg.get("strike_price"))
+    expiration_raw = short_leg.get("expiration_date")
+    if strike_price is None or not expiration_raw:
+        return {}
+    try:
+        expiration_date = date.fromisoformat(str(expiration_raw))
+    except ValueError:
+        return {}
+    return {
+        "short_leg_strike": strike_price,
+        "short_leg_expiration_date": expiration_date,
+    }
+
+
+def _build_analog_strike_fit_metrics(
+    *,
+    symbol: str,
+    strategy_type: str | None,
+    bars: list,
+    trade: object,
+    analog_strike_fit_max_distance_pct: float | None,
+    analog_strike_fit_band_padding_pct: float | None,
+    analog_strike_fit_max_band_width_pct: float | None,
+) -> dict[str, object]:
+    base_metrics = {
+        "analog_forecast_available": False,
+        "analog_forecast_horizon_days": "",
+        "analog_expected_return_low_pct": "",
+        "analog_expected_return_median_pct": "",
+        "analog_expected_return_high_pct": "",
+        "analog_projected_low_underlying_price": "",
+        "analog_projected_underlying_price": "",
+        "analog_projected_high_underlying_price": "",
+        "short_leg_strike": "",
+        "analog_projected_strike_distance_pct": "",
+        "analog_median_strike_fit_passed": "",
+        "analog_projected_band_width_pct": "",
+        "analog_projected_band_lower_price": "",
+        "analog_projected_band_upper_price": "",
+        "analog_projected_band_gap_pct": "",
+        "analog_band_strike_fit_padding_pct": "",
+        "analog_band_width_threshold_pct": "",
+        "analog_band_width_confidence_passed": "",
+        "analog_band_filter_applied": "",
+        "analog_band_strike_fit_passed": "",
+        "analog_strike_fit_passed": "",
+    }
+    analog_filter_enabled = (
+        analog_strike_fit_max_distance_pct is not None
+        or analog_strike_fit_band_padding_pct is not None
+        or analog_strike_fit_max_band_width_pct is not None
+    )
+    if not analog_filter_enabled:
+        return base_metrics
+
+    entry_date = getattr(trade, "entry_date", None)
+    entry_underlying_close = _safe_float(getattr(trade, "entry_underlying_close", None))
+    if not isinstance(entry_date, date) or entry_underlying_close is None or entry_underlying_close <= 0:
+        return base_metrics
+
+    short_leg_inputs = _extract_short_leg_forecast_inputs(trade)
+    short_leg_strike = _safe_float(short_leg_inputs.get("short_leg_strike"))
+    short_leg_expiration_date = short_leg_inputs.get("short_leg_expiration_date")
+    if short_leg_strike is None or not isinstance(short_leg_expiration_date, date):
+        return base_metrics
+
+    horizon_days = max((short_leg_expiration_date - entry_date).days, 1)
+    history_bars = [bar for bar in bars if bar.trade_date <= entry_date]
+    try:
+        forecast = _ANALOG_STRIKE_FIT_FORECASTER.forecast(
+            symbol=symbol,
+            bars=history_bars,
+            horizon_days=horizon_days,
+            strategy_type=strategy_type,
+        )
+    except (ValueError, LookupError):
+        return {
+            **base_metrics,
+            "short_leg_strike": round(short_leg_strike, 4),
+            "analog_forecast_horizon_days": horizon_days,
+        }
+
+    projected_low_underlying_price = entry_underlying_close * (1.0 + float(forecast.expected_return_low_pct) / 100.0)
+    projected_underlying_price = entry_underlying_close * (1.0 + float(forecast.expected_return_median_pct) / 100.0)
+    projected_high_underlying_price = entry_underlying_close * (1.0 + float(forecast.expected_return_high_pct) / 100.0)
+    projected_strike_distance_pct = abs(projected_underlying_price - short_leg_strike) / entry_underlying_close * 100.0
+    median_pass = (
+        projected_strike_distance_pct <= float(analog_strike_fit_max_distance_pct)
+        if analog_strike_fit_max_distance_pct is not None
+        else ""
+    )
+
+    projected_band_lower_price = ""
+    projected_band_upper_price = ""
+    projected_band_width_pct = ""
+    projected_band_gap_pct = ""
+    band_width_confidence_passed: bool | str = ""
+    band_filter_applied: bool | str = ""
+    band_pass: bool | str = ""
+    if analog_strike_fit_band_padding_pct is not None:
+        projected_band_padding_amount = entry_underlying_close * float(analog_strike_fit_band_padding_pct) / 100.0
+        projected_band_lower_price = min(projected_low_underlying_price, projected_high_underlying_price) - projected_band_padding_amount
+        projected_band_upper_price = max(projected_low_underlying_price, projected_high_underlying_price) + projected_band_padding_amount
+        projected_band_width_pct = (
+            abs(projected_high_underlying_price - projected_low_underlying_price)
+            / entry_underlying_close
+            * 100.0
+        )
+        if analog_strike_fit_max_band_width_pct is not None:
+            band_width_confidence_passed = projected_band_width_pct <= float(analog_strike_fit_max_band_width_pct)
+            band_filter_applied = band_width_confidence_passed
+        else:
+            band_filter_applied = True
+        band_pass = projected_band_lower_price <= short_leg_strike <= projected_band_upper_price
+        if band_pass:
+            projected_band_gap_pct = 0.0
+        else:
+            projected_band_gap_pct = (
+                min(
+                    abs(short_leg_strike - projected_band_lower_price),
+                    abs(short_leg_strike - projected_band_upper_price),
+                )
+                / entry_underlying_close
+                * 100.0
+            )
+
+    enabled_results = [result for result in (median_pass,) if isinstance(result, bool)]
+    if band_filter_applied is True and isinstance(band_pass, bool):
+        enabled_results.append(band_pass)
+    overall_pass: bool | str = ""
+    if enabled_results:
+        overall_pass = all(enabled_results)
+    elif analog_strike_fit_band_padding_pct is not None and band_filter_applied is False:
+        overall_pass = True
+    return {
+        "analog_forecast_available": True,
+        "analog_forecast_horizon_days": horizon_days,
+        "analog_expected_return_low_pct": round(float(forecast.expected_return_low_pct), 4),
+        "analog_expected_return_median_pct": round(float(forecast.expected_return_median_pct), 4),
+        "analog_expected_return_high_pct": round(float(forecast.expected_return_high_pct), 4),
+        "analog_projected_low_underlying_price": round(projected_low_underlying_price, 4),
+        "analog_projected_underlying_price": round(projected_underlying_price, 4),
+        "analog_projected_high_underlying_price": round(projected_high_underlying_price, 4),
+        "short_leg_strike": round(short_leg_strike, 4),
+        "analog_projected_strike_distance_pct": round(projected_strike_distance_pct, 4),
+        "analog_median_strike_fit_passed": median_pass,
+        "analog_projected_band_width_pct": (
+            round(float(projected_band_width_pct), 4)
+            if projected_band_width_pct != ""
+            else ""
+        ),
+        "analog_projected_band_lower_price": (
+            round(float(projected_band_lower_price), 4)
+            if projected_band_lower_price != ""
+            else ""
+        ),
+        "analog_projected_band_upper_price": (
+            round(float(projected_band_upper_price), 4)
+            if projected_band_upper_price != ""
+            else ""
+        ),
+        "analog_projected_band_gap_pct": (
+            round(float(projected_band_gap_pct), 4)
+            if projected_band_gap_pct != ""
+            else ""
+        ),
+        "analog_band_strike_fit_padding_pct": (
+            round(float(analog_strike_fit_band_padding_pct), 4)
+            if analog_strike_fit_band_padding_pct is not None
+            else ""
+        ),
+        "analog_band_width_threshold_pct": (
+            round(float(analog_strike_fit_max_band_width_pct), 4)
+            if analog_strike_fit_max_band_width_pct is not None
+            else ""
+        ),
+        "analog_band_width_confidence_passed": band_width_confidence_passed,
+        "analog_band_filter_applied": band_filter_applied,
+        "analog_band_strike_fit_passed": band_pass,
+        "analog_strike_fit_passed": overall_pass,
+    }
+
+
 def _replay_symbol(
     *,
     candidate: dict[str, object],
@@ -932,6 +1187,9 @@ def _replay_symbol(
     stop_loss_pct: float | None,
     avoid_earnings_days_before: int,
     avoid_earnings_days_after: int,
+    analog_strike_fit_max_distance_pct: float | None,
+    analog_strike_fit_band_padding_pct: float | None,
+    analog_strike_fit_max_band_width_pct: float | None,
 ) -> tuple[dict[str, object], list[dict[str, object]]]:
     components = _resolve_candidate_components(candidate)
     payload = dict(components["payload"])
@@ -1009,6 +1267,16 @@ def _replay_symbol(
         trade_map[strategy.label] = per_date
 
     ledger_rows: list[dict[str, object]] = []
+    analog_filter_enabled = (
+        analog_strike_fit_max_distance_pct is not None
+        or analog_strike_fit_band_padding_pct is not None
+        or analog_strike_fit_max_band_width_pct is not None
+    )
+    analog_strike_fit_filtered_trade_count = 0
+    analog_strike_fit_unavailable_trade_count = 0
+    analog_median_strike_fit_filtered_trade_count = 0
+    analog_band_strike_fit_filtered_trade_count = 0
+    analog_band_confidence_skipped_trade_count = 0
     for entry_date in entry_dates:
         indicator_row = indicators.get(entry_date)
         regime, strategy = _select_regime_strategy_for_candidate(
@@ -1026,6 +1294,27 @@ def _replay_symbol(
         trade = trade_map[strategy.label].get(entry_date)
         if trade is None:
             continue
+        analog_strike_fit_metrics = _build_analog_strike_fit_metrics(
+            symbol=symbol,
+            strategy_type=getattr(strategy.strategy_type, "value", str(strategy.strategy_type)),
+            bars=bundle.bars,
+            trade=trade,
+            analog_strike_fit_max_distance_pct=analog_strike_fit_max_distance_pct,
+            analog_strike_fit_band_padding_pct=analog_strike_fit_band_padding_pct,
+            analog_strike_fit_max_band_width_pct=analog_strike_fit_max_band_width_pct,
+        )
+        if analog_filter_enabled:
+            if analog_strike_fit_metrics["analog_forecast_available"] is False:
+                analog_strike_fit_unavailable_trade_count += 1
+            if analog_strike_fit_metrics["analog_median_strike_fit_passed"] is False:
+                analog_median_strike_fit_filtered_trade_count += 1
+            if analog_strike_fit_metrics["analog_band_filter_applied"] is False:
+                analog_band_confidence_skipped_trade_count += 1
+            elif analog_strike_fit_metrics["analog_band_strike_fit_passed"] is False:
+                analog_band_strike_fit_filtered_trade_count += 1
+            if analog_strike_fit_metrics["analog_strike_fit_passed"] is False:
+                analog_strike_fit_filtered_trade_count += 1
+                continue
 
         quantity = _safe_float(getattr(trade, "quantity", 1.0)) or 1.0
         detail_json = getattr(trade, "detail_json", {}) or {}
@@ -1068,6 +1357,7 @@ def _replay_symbol(
                 "stop_loss_pct": round(float(stop_loss_pct), 4) if stop_loss_pct is not None else "",
                 "avoid_earnings_days_before": int(avoid_earnings_days_before) if avoid_earnings_days_before > 0 else "",
                 "avoid_earnings_days_after": int(avoid_earnings_days_after) if avoid_earnings_days_after > 0 else "",
+                **analog_strike_fit_metrics,
             }
         )
 
@@ -1096,6 +1386,30 @@ def _replay_symbol(
         "stop_loss_pct": round(float(stop_loss_pct), 4) if stop_loss_pct is not None else "",
         "avoid_earnings_days_before": int(avoid_earnings_days_before) if avoid_earnings_days_before > 0 else "",
         "avoid_earnings_days_after": int(avoid_earnings_days_after) if avoid_earnings_days_after > 0 else "",
+        "analog_strike_fit_filter_enabled": analog_filter_enabled,
+        "analog_median_strike_fit_enabled": analog_strike_fit_max_distance_pct is not None,
+        "analog_strike_fit_max_distance_pct": (
+            round(float(analog_strike_fit_max_distance_pct), 4)
+            if analog_strike_fit_max_distance_pct is not None
+            else ""
+        ),
+        "analog_band_strike_fit_enabled": analog_strike_fit_band_padding_pct is not None,
+        "analog_strike_fit_band_padding_pct": (
+            round(float(analog_strike_fit_band_padding_pct), 4)
+            if analog_strike_fit_band_padding_pct is not None
+            else ""
+        ),
+        "analog_band_confidence_gate_enabled": analog_strike_fit_max_band_width_pct is not None,
+        "analog_strike_fit_max_band_width_pct": (
+            round(float(analog_strike_fit_max_band_width_pct), 4)
+            if analog_strike_fit_max_band_width_pct is not None
+            else ""
+        ),
+        "analog_strike_fit_filtered_trade_count": analog_strike_fit_filtered_trade_count,
+        "analog_median_strike_fit_filtered_trade_count": analog_median_strike_fit_filtered_trade_count,
+        "analog_band_strike_fit_filtered_trade_count": analog_band_strike_fit_filtered_trade_count,
+        "analog_band_confidence_skipped_trade_count": analog_band_confidence_skipped_trade_count,
+        "analog_strike_fit_unavailable_trade_count": analog_strike_fit_unavailable_trade_count,
         "trade_count": len(ledger_rows),
         "total_capital_required": round(total_capital, 4),
         "total_net_pnl": round(total_pnl, 4),
@@ -1243,10 +1557,20 @@ def main() -> int:
         raise SystemExit("--stop-loss-pct must be > 0.")
     if args.min_spot_price is not None and args.min_spot_price <= 0:
         raise SystemExit("--min-spot-price must be > 0.")
+    if args.analog_strike_fit_max_distance_pct is not None and args.analog_strike_fit_max_distance_pct <= 0:
+        raise SystemExit("--analog-strike-fit-max-distance-pct must be > 0.")
+    if args.analog_strike_fit_max_band_width_pct is not None and args.analog_strike_fit_max_band_width_pct < 0:
+        raise SystemExit("--analog-strike-fit-max-band-width-pct must be greater than or equal to 0.")
     if args.avoid_earnings_days_before < 0:
         raise SystemExit("--avoid-earnings-days-before must be >= 0.")
     if args.avoid_earnings_days_after < 0:
         raise SystemExit("--avoid-earnings-days-after must be >= 0.")
+    if args.analog_strike_fit_band_padding_pct is not None and args.analog_strike_fit_band_padding_pct < 0:
+        raise SystemExit("--analog-strike-fit-band-padding-pct must be greater than or equal to 0.")
+    if args.analog_strike_fit_max_band_width_pct is not None and args.analog_strike_fit_band_padding_pct is None:
+        raise SystemExit(
+            "--analog-strike-fit-max-band-width-pct requires --analog-strike-fit-band-padding-pct."
+        )
     ignored_assignment_exit_reasons = _install_assignment_exit_ignore_filter(
         ignored_assignment_exit_reasons=args.ignore_assignment_exit_reasons,
     )
@@ -1258,6 +1582,9 @@ def main() -> int:
         avoid_earnings_days_before=args.avoid_earnings_days_before,
         avoid_earnings_days_after=args.avoid_earnings_days_after,
         ignored_assignment_exit_reasons=ignored_assignment_exit_reasons,
+        analog_strike_fit_max_distance_pct=args.analog_strike_fit_max_distance_pct,
+        analog_strike_fit_band_padding_pct=args.analog_strike_fit_band_padding_pct,
+        analog_strike_fit_max_band_width_pct=args.analog_strike_fit_max_band_width_pct,
     )
     if not output_prefix.is_absolute():
         output_prefix = ROOT / output_prefix
@@ -1374,6 +1701,9 @@ def main() -> int:
                 stop_loss_pct=args.stop_loss_pct,
                 avoid_earnings_days_before=args.avoid_earnings_days_before,
                 avoid_earnings_days_after=args.avoid_earnings_days_after,
+                analog_strike_fit_max_distance_pct=args.analog_strike_fit_max_distance_pct,
+                analog_strike_fit_band_padding_pct=args.analog_strike_fit_band_padding_pct,
+                analog_strike_fit_max_band_width_pct=args.analog_strike_fit_max_band_width_pct,
             ): str(item["symbol"])
             for item in selected
         }
@@ -1494,10 +1824,36 @@ def main() -> int:
         "avoid_earnings_days_before": args.avoid_earnings_days_before,
         "avoid_earnings_days_after": args.avoid_earnings_days_after,
         "ignored_assignment_exit_reasons": list(ignored_assignment_exit_reasons),
+        "analog_strike_fit_filter_enabled": (
+            args.analog_strike_fit_max_distance_pct is not None
+            or args.analog_strike_fit_band_padding_pct is not None
+            or args.analog_strike_fit_max_band_width_pct is not None
+        ),
+        "analog_median_strike_fit_enabled": args.analog_strike_fit_max_distance_pct is not None,
+        "analog_strike_fit_max_distance_pct": args.analog_strike_fit_max_distance_pct,
+        "analog_band_strike_fit_enabled": args.analog_strike_fit_band_padding_pct is not None,
+        "analog_strike_fit_band_padding_pct": args.analog_strike_fit_band_padding_pct,
+        "analog_band_confidence_gate_enabled": args.analog_strike_fit_max_band_width_pct is not None,
+        "analog_strike_fit_max_band_width_pct": args.analog_strike_fit_max_band_width_pct,
         "max_training_assignment_count": args.max_training_assignment_count,
         "max_training_assignment_rate_pct": args.max_training_assignment_rate_pct,
         "max_training_put_assignment_count": args.max_training_put_assignment_count,
         "max_training_put_assignment_rate_pct": args.max_training_put_assignment_rate_pct,
+        "analog_strike_fit_filtered_trade_count": sum(
+            int(item["analog_strike_fit_filtered_trade_count"]) for item in result_rows
+        ),
+        "analog_median_strike_fit_filtered_trade_count": sum(
+            int(item["analog_median_strike_fit_filtered_trade_count"]) for item in result_rows
+        ),
+        "analog_band_strike_fit_filtered_trade_count": sum(
+            int(item["analog_band_strike_fit_filtered_trade_count"]) for item in result_rows
+        ),
+        "analog_band_confidence_skipped_trade_count": sum(
+            int(item["analog_band_confidence_skipped_trade_count"]) for item in result_rows
+        ),
+        "analog_strike_fit_unavailable_trade_count": sum(
+            int(item["analog_strike_fit_unavailable_trade_count"]) for item in result_rows
+        ),
         "stability_filter_enabled": bool(candidate_stats.get("stability_filter_enabled")),
         "stability_top_pool": args.stability_top_pool,
         "stability_min_positive_months": (

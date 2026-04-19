@@ -106,9 +106,29 @@ def _parse_args() -> argparse.Namespace:
         help="Minimum predicted count required for each regime before a candidate is constraint-passing.",
     )
     parser.add_argument(
+        "--abstention-thresholds",
+        default=evaluator.DEFAULT_CONFIDENCE_THRESHOLDS,
+        help="Comma-separated confidence thresholds to evaluate on each selected best config.",
+    )
+    parser.add_argument(
+        "--abstention-min-trades",
+        type=int,
+        default=30,
+        help="Minimum directional predictions required for a confidence threshold to be considered recommended.",
+    )
+    parser.set_defaults(require_monotonic_forward_returns=evaluator.DEFAULT_REQUIRE_MONOTONIC_FORWARD_RETURNS)
+    monotonic_group = parser.add_mutually_exclusive_group()
+    monotonic_group.add_argument(
         "--allow-non-monotonic-forward-returns",
+        dest="require_monotonic_forward_returns",
+        action="store_false",
+        help="Allow non-monotonic forward returns in the evaluator. This is now the default.",
+    )
+    monotonic_group.add_argument(
+        "--require-monotonic-forward-returns",
+        dest="require_monotonic_forward_returns",
         action="store_true",
-        help="Disable the monotonic-forward-return constraint in the evaluator.",
+        help="Require monotonic forward returns in the evaluator.",
     )
     parser.add_argument(
         "--max-workers",
@@ -191,7 +211,13 @@ def _result_output_path(
     )
 
 
-def _is_completed_output(path: Path, *, objective: str) -> bool:
+def _is_completed_output(
+    path: Path,
+    *,
+    objective: str,
+    abstention_thresholds: str | None = None,
+    abstention_min_trades: int | None = None,
+) -> bool:
     if not path.exists():
         return False
     try:
@@ -200,11 +226,25 @@ def _is_completed_output(path: Path, *, objective: str) -> bool:
         return False
     if payload.get("objective") != objective:
         return False
+    if abstention_thresholds is not None or abstention_min_trades is not None:
+        search_space = payload.get("search_space")
+        if not isinstance(search_space, dict):
+            return False
+        abstention = search_space.get("abstention")
+        if not isinstance(abstention, dict):
+            return False
+        if abstention_thresholds is not None:
+            expected_thresholds = list(evaluator._dedupe_preserve_order((0.0, *evaluator._parse_float_csv(abstention_thresholds))))
+            actual_thresholds = abstention.get("thresholds")
+            if actual_thresholds != expected_thresholds:
+                return False
+        if abstention_min_trades is not None and abstention.get("min_trades") != abstention_min_trades:
+            return False
     symbols = payload.get("symbols")
     if not isinstance(symbols, list) or len(symbols) != 1:
         return False
     best_result = symbols[0].get("best_result") if isinstance(symbols[0], dict) else None
-    return isinstance(best_result, dict)
+    return isinstance(best_result, dict) and "latest_signal_confidence" in best_result
 
 
 def _append_jsonl(path: Path, row: dict[str, object], lock: threading.Lock) -> None:
@@ -274,6 +314,19 @@ def _summary_row_from_payload(
         "macro_recall_pct": best_result.get("macro_recall_pct"),
         "exact_hit_count": best_result.get("exact_hit_count"),
         "directional_hit_count": best_result.get("directional_hit_count"),
+        "latest_signal_date": best_result.get("latest_signal_date"),
+        "latest_signal_regime": best_result.get("latest_signal_regime"),
+        "latest_signal_confidence": best_result.get("latest_signal_confidence"),
+        "recommended_abstention_exact_threshold": best_result.get("recommended_abstention_exact_threshold"),
+        "recommended_abstention_exact_trade_count": best_result.get("recommended_abstention_exact_trade_count"),
+        "recommended_abstention_exact_coverage_pct": best_result.get("recommended_abstention_exact_coverage_pct"),
+        "recommended_abstention_exact_accuracy_pct": best_result.get("recommended_abstention_exact_accuracy_pct"),
+        "recommended_abstention_exact_accuracy_delta_pct": best_result.get("recommended_abstention_exact_accuracy_delta_pct"),
+        "recommended_abstention_exact_should_trade_latest": best_result.get("recommended_abstention_exact_should_trade_latest"),
+        "recommended_abstention_macro_precision_threshold": best_result.get("recommended_abstention_macro_precision_threshold"),
+        "recommended_abstention_macro_precision_trade_count": best_result.get("recommended_abstention_macro_precision_trade_count"),
+        "recommended_abstention_macro_precision_pct": best_result.get("recommended_abstention_macro_precision_pct"),
+        "recommended_abstention_macro_precision_delta_pct": best_result.get("recommended_abstention_macro_precision_delta_pct"),
     }
 
 
@@ -285,7 +338,12 @@ def _run_symbol(
     status_lock: threading.Lock,
 ) -> dict[str, object]:
     start_ts = time.perf_counter()
-    if not args.force and _is_completed_output(item.output_path, objective=args.objective):
+    if not args.force and _is_completed_output(
+        item.output_path,
+        objective=args.objective,
+        abstention_thresholds=args.abstention_thresholds,
+        abstention_min_trades=args.abstention_min_trades,
+    ):
         payload = json.loads(item.output_path.read_text(encoding="utf-8"))
         row = _summary_row_from_payload(
             payload=payload,
@@ -324,6 +382,10 @@ def _run_symbol(
         str(args.min_observations),
         "--min-predicted-regime-count",
         str(args.min_predicted_regime_count),
+        "--abstention-thresholds",
+        str(args.abstention_thresholds),
+        "--abstention-min-trades",
+        str(args.abstention_min_trades),
         "--indicator-workers",
         str(args.indicator_workers),
         "--output-json",
@@ -333,8 +395,8 @@ def _run_symbol(
         command.extend(["--neutral-move-pcts", str(args.neutral_move_pcts)])
     if args.heavy_move_pcts:
         command.extend(["--heavy-move-pcts", str(args.heavy_move_pcts)])
-    if args.allow_non_monotonic_forward_returns:
-        command.append("--allow-non-monotonic-forward-returns")
+    if args.require_monotonic_forward_returns:
+        command.append("--require-monotonic-forward-returns")
     if args.disable_cache:
         command.append("--disable-cache")
 
@@ -353,7 +415,12 @@ def _run_symbol(
         handle.write(f"\nEXIT_CODE: {completed.returncode}\n")
 
     elapsed = round(time.perf_counter() - start_ts, 3)
-    if completed.returncode == 0 and _is_completed_output(item.output_path, objective=args.objective):
+    if completed.returncode == 0 and _is_completed_output(
+        item.output_path,
+        objective=args.objective,
+        abstention_thresholds=args.abstention_thresholds,
+        abstention_min_trades=args.abstention_min_trades,
+    ):
         payload = json.loads(item.output_path.read_text(encoding="utf-8"))
         row = _summary_row_from_payload(
             payload=payload,
@@ -421,6 +488,19 @@ def _write_summary_csv(*, rows: list[dict[str, object]], path: Path) -> None:
         "macro_recall_pct",
         "exact_hit_count",
         "directional_hit_count",
+        "latest_signal_date",
+        "latest_signal_regime",
+        "latest_signal_confidence",
+        "recommended_abstention_exact_threshold",
+        "recommended_abstention_exact_trade_count",
+        "recommended_abstention_exact_coverage_pct",
+        "recommended_abstention_exact_accuracy_pct",
+        "recommended_abstention_exact_accuracy_delta_pct",
+        "recommended_abstention_exact_should_trade_latest",
+        "recommended_abstention_macro_precision_threshold",
+        "recommended_abstention_macro_precision_trade_count",
+        "recommended_abstention_macro_precision_pct",
+        "recommended_abstention_macro_precision_delta_pct",
         "returncode",
     ]
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -487,7 +567,9 @@ def main() -> int:
                 "ema_gap_threshold_pcts": args.ema_gap_threshold_pcts,
                 "heavy_vol_threshold_pcts": args.heavy_vol_threshold_pcts,
                 "min_predicted_regime_count": args.min_predicted_regime_count,
-                "require_monotonic_forward_returns": not args.allow_non_monotonic_forward_returns,
+                "abstention_thresholds": args.abstention_thresholds,
+                "abstention_min_trades": args.abstention_min_trades,
+                "require_monotonic_forward_returns": args.require_monotonic_forward_returns,
                 "max_workers": args.max_workers,
                 "indicator_workers": args.indicator_workers,
                 "status_jsonl": str(status_jsonl.relative_to(ROOT)).replace("\\", "/"),

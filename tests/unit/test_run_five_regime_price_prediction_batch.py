@@ -94,3 +94,46 @@ def test_summary_row_from_payload_flattens_best_result() -> None:
     assert row["constraint_passed"] is True
     assert row["exact_accuracy_pct"] == 27.2
     assert row["directional_hit_count"] == 209
+
+
+def test_parse_args_defaults_to_allowing_non_monotonic_forward_returns(monkeypatch) -> None:
+    monkeypatch.setattr(sys, "argv", ["run_five_regime_price_prediction_batch.py", "--symbols", "AGQ"])
+
+    args = module._parse_args()
+
+    assert args.require_monotonic_forward_returns is False
+
+
+def test_parse_args_accepts_precision_first_objective(monkeypatch) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_five_regime_price_prediction_batch.py",
+            "--symbols",
+            "AGQ",
+            "--objective",
+            "precision_first",
+        ],
+    )
+
+    args = module._parse_args()
+
+    assert args.objective == "precision_first"
+
+
+def test_parse_args_can_require_monotonic_forward_returns(monkeypatch) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "run_five_regime_price_prediction_batch.py",
+            "--symbols",
+            "AGQ",
+            "--require-monotonic-forward-returns",
+        ],
+    )
+
+    args = module._parse_args()
+
+    assert args.require_monotonic_forward_returns is True

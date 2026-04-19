@@ -28,13 +28,17 @@ DEFAULT_OBJECTIVE = "macro_f1"
 DEFAULT_EMA_GAP_THRESHOLD_PCTS = "none,0.5"
 DEFAULT_HEAVY_VOL_THRESHOLD_PCTS = "none,25"
 DEFAULT_MIN_PREDICTED_REGIME_COUNT = 10
+DEFAULT_REQUIRE_MONOTONIC_FORWARD_RETURNS = False
+DEFAULT_CONFIDENCE_THRESHOLDS = "0,0.25,0.5,0.75,1.0,1.25,1.5,2.0"
 REGIME_LABELS = ("heavy_bullish", "bullish", "neutral", "bearish", "heavy_bearish")
+DIRECTIONAL_REGIME_LABELS = ("heavy_bullish", "bullish", "bearish", "heavy_bearish")
 MONOTONIC_REGIME_ORDER = ("heavy_bearish", "bearish", "neutral", "bullish", "heavy_bullish")
 OBJECTIVE_FIELD_MAP = {
     "exact_accuracy": "exact_accuracy_pct",
     "directional_accuracy": "directional_accuracy_pct",
     "balanced_accuracy": "balanced_accuracy_pct",
     "macro_f1": "macro_f1_pct",
+    "precision_first": "macro_precision_pct",
 }
 _DIRECTION_BUCKETS = {
     "heavy_bullish": 1,
@@ -168,11 +172,39 @@ def _parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--abstention-thresholds",
+        default=DEFAULT_CONFIDENCE_THRESHOLDS,
+        help=(
+            "Comma-separated confidence thresholds to evaluate on the selected best config. "
+            "Defaults to 0,0.25,0.5,0.75,1.0,1.25,1.5,2.0."
+        ),
+    )
+    parser.add_argument(
+        "--abstention-min-trades",
+        type=int,
+        default=30,
+        help=(
+            "Minimum directional predictions required for a confidence threshold to be considered "
+            "a recommended abstention setting. Defaults to 30."
+        ),
+    )
+    parser.set_defaults(require_monotonic_forward_returns=DEFAULT_REQUIRE_MONOTONIC_FORWARD_RETURNS)
+    monotonic_group = parser.add_mutually_exclusive_group()
+    monotonic_group.add_argument(
         "--allow-non-monotonic-forward-returns",
+        dest="require_monotonic_forward_returns",
+        action="store_false",
+        help=(
+            "Allow non-monotonic average forward returns across predicted regimes. "
+            "This is now the default."
+        ),
+    )
+    monotonic_group.add_argument(
+        "--require-monotonic-forward-returns",
+        dest="require_monotonic_forward_returns",
         action="store_true",
         help=(
-            "Disable the monotonic return-profile constraint. "
-            "By default, the evaluator prefers candidates whose average forward returns increase "
+            "Require candidates whose average forward returns increase "
             "from heavy_bearish through heavy_bullish."
         ),
     )
@@ -355,6 +387,16 @@ def _float_mean(values: list[float]) -> float | None:
     return sum(values) / len(values)
 
 
+def _float_median(values: list[float]) -> float | None:
+    if not values:
+        return None
+    ordered = sorted(values)
+    midpoint = len(ordered) // 2
+    if len(ordered) % 2 == 1:
+        return ordered[midpoint]
+    return (ordered[midpoint - 1] + ordered[midpoint]) / 2.0
+
+
 def _pct(numerator: int, denominator: int) -> float:
     if denominator <= 0:
         return 0.0
@@ -365,6 +407,304 @@ def _safe_ratio(numerator: int, denominator: int) -> float:
     if denominator <= 0:
         return 0.0
     return numerator / denominator
+
+
+def _positive_margin_score(value: float | None, threshold: float, scale: float) -> float:
+    if value is None:
+        return 0.0
+    if scale <= 0:
+        raise ValueError("scale must be positive.")
+    return max(0.0, (float(value) - threshold) / scale)
+
+
+def _negative_margin_score(value: float | None, threshold: float, scale: float) -> float:
+    if value is None:
+        return 0.0
+    if scale <= 0:
+        raise ValueError("scale must be positive.")
+    return max(0.0, (threshold - float(value)) / scale)
+
+
+def _bull_confidence_score(
+    *,
+    filter_config: object,
+    indicator_triplet: tuple[float | None, float | None, float | None],
+    heavy: bool = False,
+) -> float:
+    roc_value, adx_value, rsi_value = indicator_triplet
+    roc_threshold = float(filter_config.roc_threshold) + (two_stage.HEAVY_ROC_BUFFER if heavy else 0.0)
+    adx_threshold = float(filter_config.adx_threshold) + (two_stage.HEAVY_ADX_BUFFER if heavy else 0.0)
+    rsi_threshold = (
+        None
+        if getattr(filter_config, "rsi_threshold", None) is None
+        else float(filter_config.rsi_threshold) + (two_stage.HEAVY_RSI_BUFFER if heavy else 0.0)
+    )
+    roc_score = _positive_margin_score(roc_value, roc_threshold, two_stage.HEAVY_ROC_BUFFER)
+    adx_score = _positive_margin_score(adx_value, adx_threshold, two_stage.HEAVY_ADX_BUFFER)
+    if rsi_threshold is None:
+        qualifier_score = adx_score
+    else:
+        qualifier_score = max(
+            adx_score,
+            _positive_margin_score(rsi_value, rsi_threshold, two_stage.HEAVY_RSI_BUFFER),
+        )
+    if roc_score <= 0.0 or qualifier_score <= 0.0:
+        return 0.0
+    return min(roc_score, qualifier_score)
+
+
+def _bear_confidence_score(
+    *,
+    filter_config: object,
+    indicator_triplet: tuple[float | None, float | None, float | None],
+    heavy: bool = False,
+) -> float:
+    roc_value, adx_value, rsi_value = indicator_triplet
+    roc_threshold = float(filter_config.roc_threshold) - (two_stage.HEAVY_ROC_BUFFER if heavy else 0.0)
+    adx_threshold = float(filter_config.adx_threshold) + (two_stage.HEAVY_ADX_BUFFER if heavy else 0.0)
+    rsi_threshold = (
+        None
+        if getattr(filter_config, "rsi_threshold", None) is None
+        else float(filter_config.rsi_threshold) - (two_stage.HEAVY_RSI_BUFFER if heavy else 0.0)
+    )
+    roc_score = _negative_margin_score(roc_value, roc_threshold, two_stage.HEAVY_ROC_BUFFER)
+    adx_score = _positive_margin_score(adx_value, adx_threshold, two_stage.HEAVY_ADX_BUFFER)
+    if rsi_threshold is None:
+        qualifier_score = adx_score
+    else:
+        qualifier_score = max(
+            adx_score,
+            _negative_margin_score(rsi_value, rsi_threshold, two_stage.HEAVY_RSI_BUFFER),
+        )
+    if roc_score <= 0.0 or qualifier_score <= 0.0:
+        return 0.0
+    return min(roc_score, qualifier_score)
+
+
+def _feature_gate_confidence_scores(
+    *,
+    feature_gate: FeatureGateConfig,
+    context_row: dict[str, float | None] | None,
+) -> dict[str, float]:
+    context_row = context_row or {}
+    ema_gap_pct = context_row.get("ema_gap_pct")
+    realized_vol_pct = context_row.get("realized_vol_pct")
+    ema_scale = (
+        max(abs(float(feature_gate.ema_gap_threshold_pct)), 0.5)
+        if feature_gate.ema_gap_threshold_pct is not None
+        else 0.5
+    )
+    heavy_vol_scale = (
+        max(abs(float(feature_gate.heavy_vol_threshold_pct)), 25.0)
+        if feature_gate.heavy_vol_threshold_pct is not None
+        else 25.0
+    )
+    return {
+        "bull_ema": (
+            math.inf
+            if feature_gate.ema_gap_threshold_pct is None
+            else _positive_margin_score(ema_gap_pct, float(feature_gate.ema_gap_threshold_pct), ema_scale)
+        ),
+        "bear_ema": (
+            math.inf
+            if feature_gate.ema_gap_threshold_pct is None
+            else _negative_margin_score(ema_gap_pct, -float(feature_gate.ema_gap_threshold_pct), ema_scale)
+        ),
+        "heavy_vol": (
+            math.inf
+            if feature_gate.heavy_vol_threshold_pct is None
+            else _positive_margin_score(realized_vol_pct, float(feature_gate.heavy_vol_threshold_pct), heavy_vol_scale)
+        ),
+    }
+
+
+def _classify_regime_with_confidence(
+    *,
+    indicator_triplet: tuple[float | None, float | None, float | None],
+    bull_filter: object,
+    bear_filter: object,
+    feature_gate: FeatureGateConfig,
+    context_row: dict[str, float | None] | None,
+) -> tuple[str, float]:
+    gate_scores = _feature_gate_confidence_scores(feature_gate=feature_gate, context_row=context_row)
+    bull_score = min(
+        _bull_confidence_score(filter_config=bull_filter, indicator_triplet=indicator_triplet),
+        gate_scores["bull_ema"],
+    )
+    bear_score = min(
+        _bear_confidence_score(filter_config=bear_filter, indicator_triplet=indicator_triplet),
+        gate_scores["bear_ema"],
+    )
+    heavy_bull_score = min(
+        _bull_confidence_score(filter_config=bull_filter, indicator_triplet=indicator_triplet, heavy=True),
+        gate_scores["bull_ema"],
+        gate_scores["heavy_vol"],
+    )
+    heavy_bear_score = min(
+        _bear_confidence_score(filter_config=bear_filter, indicator_triplet=indicator_triplet, heavy=True),
+        gate_scores["bear_ema"],
+        gate_scores["heavy_vol"],
+    )
+    if bull_score > 0.0 and bear_score <= 0.0:
+        if heavy_bull_score > 0.0:
+            return ("heavy_bullish", heavy_bull_score)
+        return ("bullish", bull_score)
+    if bear_score > 0.0 and bull_score <= 0.0:
+        if heavy_bear_score > 0.0:
+            return ("heavy_bearish", heavy_bear_score)
+        return ("bearish", bear_score)
+    return ("neutral", 0.0)
+
+
+def _prediction_series_with_confidence(
+    *,
+    evaluation_dates: list[date],
+    indicator_triplets: list[tuple[float | None, float | None, float | None]],
+    context_by_date: dict[date, dict[str, float | None]],
+    bull_filter: object,
+    bear_filter: object,
+    feature_gate: FeatureGateConfig,
+) -> dict[str, object]:
+    predicted_regimes: list[str] = []
+    confidence_scores: list[float] = []
+    for trade_date, indicator_triplet in zip(evaluation_dates, indicator_triplets, strict=True):
+        regime, confidence = _classify_regime_with_confidence(
+            indicator_triplet=indicator_triplet,
+            bull_filter=bull_filter,
+            bear_filter=bear_filter,
+            feature_gate=feature_gate,
+            context_row=context_by_date.get(trade_date),
+        )
+        predicted_regimes.append(regime)
+        confidence_scores.append(round(float(confidence), 6))
+    return {
+        "evaluation_dates": evaluation_dates,
+        "predicted_regimes": predicted_regimes,
+        "confidence_scores": confidence_scores,
+    }
+
+
+def _directional_subset_metrics(
+    *,
+    predicted_regimes: list[str],
+    actual_regimes: list[str],
+    confidence_scores: list[float],
+    threshold: float,
+) -> dict[str, object]:
+    if len(predicted_regimes) != len(actual_regimes) or len(predicted_regimes) != len(confidence_scores):
+        raise ValueError("prediction, actual, and confidence series must have the same length.")
+    retained_indices = [
+        index
+        for index, (predicted_regime, confidence_score) in enumerate(zip(predicted_regimes, confidence_scores, strict=True))
+        if predicted_regime != "neutral" and confidence_score >= threshold
+    ]
+    trade_count = len(retained_indices)
+    observation_count = len(predicted_regimes)
+    coverage_pct = _pct(trade_count, observation_count)
+    if trade_count == 0:
+        return {
+            "confidence_threshold": round(threshold, 4),
+            "trade_count": 0,
+            "coverage_pct": coverage_pct,
+            "exact_accuracy_pct": 0.0,
+            "directional_accuracy_pct": 0.0,
+            "macro_precision_pct": 0.0,
+            "average_confidence": None,
+            "median_confidence": None,
+            "predicted_counts": {label: 0 for label in DIRECTIONAL_REGIME_LABELS},
+            "precision_by_label_pct": {label: 0.0 for label in DIRECTIONAL_REGIME_LABELS},
+            "best_bucket": None,
+            "best_bucket_precision_pct": None,
+            "best_bucket_count": 0,
+        }
+
+    predicted_subset = [predicted_regimes[index] for index in retained_indices]
+    actual_subset = [actual_regimes[index] for index in retained_indices]
+    confidence_subset = [confidence_scores[index] for index in retained_indices]
+    predicted_counts = {
+        label: sum(1 for predicted_regime in predicted_subset if predicted_regime == label)
+        for label in DIRECTIONAL_REGIME_LABELS
+    }
+    precision_by_label_pct: dict[str, float] = {}
+    exact_hit_count = 0
+    directional_hit_count = 0
+    for predicted_regime, actual_regime in zip(predicted_subset, actual_subset, strict=True):
+        if predicted_regime == actual_regime:
+            exact_hit_count += 1
+        if _DIRECTION_BUCKETS[predicted_regime] == _DIRECTION_BUCKETS[actual_regime]:
+            directional_hit_count += 1
+    for label in DIRECTIONAL_REGIME_LABELS:
+        predicted_count = predicted_counts[label]
+        exact_count = sum(
+            1
+            for predicted_regime, actual_regime in zip(predicted_subset, actual_subset, strict=True)
+            if predicted_regime == label and actual_regime == label
+        )
+        precision_by_label_pct[label] = round(_safe_ratio(exact_count, predicted_count) * 100.0, 4)
+    active_labels = [label for label in DIRECTIONAL_REGIME_LABELS if predicted_counts[label] > 0]
+    macro_precision_pct = round(
+        (
+            sum(precision_by_label_pct[label] for label in active_labels) / len(active_labels)
+            if active_labels
+            else 0.0
+        ),
+        4,
+    )
+    best_bucket = None
+    best_bucket_precision_pct = None
+    best_bucket_count = 0
+    if active_labels:
+        best_bucket = max(
+            active_labels,
+            key=lambda label: (precision_by_label_pct[label], predicted_counts[label], label),
+        )
+        best_bucket_precision_pct = precision_by_label_pct[best_bucket]
+        best_bucket_count = predicted_counts[best_bucket]
+    return {
+        "confidence_threshold": round(threshold, 4),
+        "trade_count": trade_count,
+        "coverage_pct": coverage_pct,
+        "exact_accuracy_pct": round(exact_hit_count / trade_count * 100.0, 4),
+        "directional_accuracy_pct": round(directional_hit_count / trade_count * 100.0, 4),
+        "macro_precision_pct": macro_precision_pct,
+        "average_confidence": round(sum(confidence_subset) / len(confidence_subset), 4),
+        "median_confidence": round(float(_float_median(confidence_subset) or 0.0), 4),
+        "predicted_counts": predicted_counts,
+        "precision_by_label_pct": precision_by_label_pct,
+        "best_bucket": best_bucket,
+        "best_bucket_precision_pct": best_bucket_precision_pct,
+        "best_bucket_count": best_bucket_count,
+    }
+
+
+def _best_abstention_row(
+    *,
+    rows: list[dict[str, object]],
+    min_trades: int,
+    metric: str,
+) -> dict[str, object] | None:
+    eligible_rows = [row for row in rows if int(row["trade_count"]) >= min_trades]
+    if not eligible_rows:
+        return None
+    if metric == "macro_precision":
+        return max(
+            eligible_rows,
+            key=lambda row: (
+                float(row["macro_precision_pct"]),
+                float(row["exact_accuracy_pct"]),
+                float(row["trade_count"]),
+                -float(row["confidence_threshold"]),
+            ),
+        )
+    return max(
+        eligible_rows,
+        key=lambda row: (
+            float(row["exact_accuracy_pct"]),
+            float(row["directional_accuracy_pct"]),
+            float(row["trade_count"]),
+            -float(row["confidence_threshold"]),
+        ),
+    )
 
 
 def _realized_regime_label(
@@ -700,20 +1040,37 @@ def _candidate_to_row(candidate: PredictionCandidate) -> dict[str, object]:
     }
 
 
-def _candidate_ranking_key(candidate: PredictionCandidate, *, objective: str) -> tuple[float, float, float, float, int]:
-    metrics = candidate.metrics
+def _metric_ranking_key(
+    metrics: dict[str, object],
+    *,
+    objective: str,
+) -> tuple[float, float, float, float, float, int]:
+    if objective == "precision_first":
+        return (
+            float(metrics["macro_precision_pct"]),
+            float(metrics["exact_accuracy_pct"]),
+            float(metrics["directional_accuracy_pct"]),
+            float(metrics["balanced_accuracy_pct"]),
+            float(metrics["macro_f1_pct"]),
+            int(metrics["observation_count"]),
+        )
     return (
         float(metrics[OBJECTIVE_FIELD_MAP[objective]]),
         float(metrics["balanced_accuracy_pct"]),
         float(metrics["macro_f1_pct"]),
         float(metrics["exact_accuracy_pct"]),
+        float(metrics["macro_precision_pct"]),
         int(metrics["observation_count"]),
     )
 
 
+def _candidate_ranking_key(candidate: PredictionCandidate, *, objective: str) -> tuple[float, float, float, float, float, int]:
+    return _metric_ranking_key(candidate.metrics, objective=objective)
+
+
 def _push_top_candidate(
     *,
-    heap: list[tuple[tuple[float, float, float, float, int], int, PredictionCandidate]],
+    heap: list[tuple[tuple[float, float, float, float, float, int], int, PredictionCandidate]],
     candidate: PredictionCandidate,
     counter: int,
     limit: int,
@@ -738,6 +1095,8 @@ def _evaluate_symbol(
     top_k: int,
     min_predicted_regime_count: int,
     require_monotonic_forward_returns: bool,
+    abstention_thresholds: tuple[float, ...],
+    abstention_min_trades: int,
     use_cache: bool,
     indicator_workers: int,
     forward_weeks: int,
@@ -807,13 +1166,13 @@ def _evaluate_symbol(
         f"x {len(feature_gate_configs)} feature gates x {len(threshold_configs)} threshold pairs)"
     )
 
-    constrained_heap: list[tuple[tuple[float, float, float, float, int], int, PredictionCandidate]] = []
-    unconstrained_heap: list[tuple[tuple[float, float, float, float, int], int, PredictionCandidate]] = []
+    constrained_heap: list[tuple[tuple[float, float, float, float, float, int], int, PredictionCandidate]] = []
+    unconstrained_heap: list[tuple[tuple[float, float, float, float, float, int], int, PredictionCandidate]] = []
     counter = 0
     constrained_best_candidate: PredictionCandidate | None = None
-    constrained_best_key: tuple[float, float, float, float, int] | None = None
+    constrained_best_key: tuple[float, float, float, float, float, int] | None = None
     unconstrained_best_candidate: PredictionCandidate | None = None
-    unconstrained_best_key: tuple[float, float, float, float, int] | None = None
+    unconstrained_best_key: tuple[float, float, float, float, float, int] | None = None
     constrained_candidate_count = 0
 
     for period_config in period_configs:
@@ -927,11 +1286,117 @@ def _evaluate_symbol(
         raise SystemExit(f"No candidates were evaluated for {symbol}.")
 
     best_row = _candidate_to_row(best_candidate)
+    best_indicator_triplets = two_stage._indicator_triplets_for_trading_fridays(
+        indicators=indicators_by_period[best_candidate.indicator_periods.label],
+        trading_fridays=evaluation_dates,
+    )
+    best_prediction_series = _prediction_series_with_confidence(
+        evaluation_dates=evaluation_dates,
+        indicator_triplets=best_indicator_triplets,
+        context_by_date=context_by_date,
+        bull_filter=best_candidate.bull_filter,
+        bear_filter=best_candidate.bear_filter,
+        feature_gate=best_candidate.feature_gate,
+    )
+    abstention_rows = [
+        _directional_subset_metrics(
+            predicted_regimes=best_prediction_series["predicted_regimes"],
+            actual_regimes=actual_regimes_by_threshold[best_candidate.threshold_config],
+            confidence_scores=best_prediction_series["confidence_scores"],
+            threshold=threshold,
+        )
+        for threshold in abstention_thresholds
+    ]
+    baseline_abstention_row = next(
+        row for row in abstention_rows if math.isclose(float(row["confidence_threshold"]), 0.0, abs_tol=1e-9)
+    )
+    best_exact_abstention_row = _best_abstention_row(
+        rows=abstention_rows,
+        min_trades=abstention_min_trades,
+        metric="exact_accuracy",
+    )
+    best_macro_precision_abstention_row = _best_abstention_row(
+        rows=abstention_rows,
+        min_trades=abstention_min_trades,
+        metric="macro_precision",
+    )
+    latest_signal_date = evaluation_dates[-1]
+    latest_signal_regime = str(best_prediction_series["predicted_regimes"][-1])
+    latest_signal_confidence = float(best_prediction_series["confidence_scores"][-1])
+    abstain_exact_threshold_label = (
+        "none"
+        if best_exact_abstention_row is None
+        else f"{float(best_exact_abstention_row['confidence_threshold']):.2f}"
+    )
+    best_row.update(
+        {
+            "latest_signal_date": latest_signal_date.isoformat(),
+            "latest_signal_regime": latest_signal_regime,
+            "latest_signal_confidence": round(latest_signal_confidence, 6),
+            "recommended_abstention_exact_threshold": (
+                None
+                if best_exact_abstention_row is None
+                else best_exact_abstention_row["confidence_threshold"]
+            ),
+            "recommended_abstention_exact_trade_count": (
+                0 if best_exact_abstention_row is None else best_exact_abstention_row["trade_count"]
+            ),
+            "recommended_abstention_exact_coverage_pct": (
+                0.0 if best_exact_abstention_row is None else best_exact_abstention_row["coverage_pct"]
+            ),
+            "recommended_abstention_exact_accuracy_pct": (
+                0.0 if best_exact_abstention_row is None else best_exact_abstention_row["exact_accuracy_pct"]
+            ),
+            "recommended_abstention_exact_accuracy_delta_pct": (
+                None
+                if best_exact_abstention_row is None
+                else round(
+                    float(best_exact_abstention_row["exact_accuracy_pct"])
+                    - float(baseline_abstention_row["exact_accuracy_pct"]),
+                    4,
+                )
+            ),
+            "recommended_abstention_exact_should_trade_latest": (
+                False
+                if best_exact_abstention_row is None
+                else (
+                    latest_signal_regime != "neutral"
+                    and latest_signal_confidence >= float(best_exact_abstention_row["confidence_threshold"])
+                )
+            ),
+            "recommended_abstention_macro_precision_threshold": (
+                None
+                if best_macro_precision_abstention_row is None
+                else best_macro_precision_abstention_row["confidence_threshold"]
+            ),
+            "recommended_abstention_macro_precision_trade_count": (
+                0
+                if best_macro_precision_abstention_row is None
+                else best_macro_precision_abstention_row["trade_count"]
+            ),
+            "recommended_abstention_macro_precision_pct": (
+                0.0
+                if best_macro_precision_abstention_row is None
+                else best_macro_precision_abstention_row["macro_precision_pct"]
+            ),
+            "recommended_abstention_macro_precision_delta_pct": (
+                None
+                if best_macro_precision_abstention_row is None
+                else round(
+                    float(best_macro_precision_abstention_row["macro_precision_pct"])
+                    - float(baseline_abstention_row["macro_precision_pct"]),
+                    4,
+                )
+            ),
+        }
+    )
     print(
         f"[{symbol}] best {objective}={best_row[OBJECTIVE_FIELD_MAP[objective]]:.4f}% "
         f"exact={best_row['exact_accuracy_pct']:.4f}% "
         f"balanced={best_row['balanced_accuracy_pct']:.4f}% "
         f"macro_f1={best_row['macro_f1_pct']:.4f}% "
+        f"macro_precision={best_row['macro_precision_pct']:.4f}% "
+        f"abstain_exact={abstain_exact_threshold_label} "
         f"mode={selected_mode} "
         f"thresholds={best_row['threshold_config']} "
         f"gates={best_row['feature_gate']}"
@@ -948,6 +1413,14 @@ def _evaluate_symbol(
         "constraint_passing_config_count": constrained_candidate_count,
         "best_result_selection": selected_mode,
         "best_result": best_row,
+        "abstention_analysis": {
+            "min_trades": abstention_min_trades,
+            "thresholds": list(abstention_thresholds),
+            "baseline": baseline_abstention_row,
+            "best_exact": best_exact_abstention_row,
+            "best_macro_precision": best_macro_precision_abstention_row,
+            "rows": abstention_rows,
+        },
         "top_results": [_candidate_to_row(candidate) for candidate in top_candidates],
     }
 
@@ -962,9 +1435,12 @@ def main() -> int:
         raise SystemExit("--min-observations must be >= 1.")
     if args.min_predicted_regime_count < 0:
         raise SystemExit("--min-predicted-regime-count must be >= 0.")
+    if args.abstention_min_trades < 0:
+        raise SystemExit("--abstention-min-trades must be >= 0.")
 
     threshold_configs = _build_label_threshold_configs(args)
     feature_gate_configs = _build_feature_gate_configs(args)
+    abstention_thresholds = _dedupe_preserve_order((0.0, *_parse_float_csv(args.abstention_thresholds)))
 
     symbols = _load_symbols(args)
     start_dates = _resolve_symbol_start_dates(
@@ -991,7 +1467,9 @@ def main() -> int:
             objective=args.objective,
             top_k=args.top_k,
             min_predicted_regime_count=args.min_predicted_regime_count,
-            require_monotonic_forward_returns=not args.allow_non_monotonic_forward_returns,
+            require_monotonic_forward_returns=args.require_monotonic_forward_returns,
+            abstention_thresholds=abstention_thresholds,
+            abstention_min_trades=args.abstention_min_trades,
             use_cache=use_cache,
             indicator_workers=args.indicator_workers,
             forward_weeks=args.forward_weeks,
@@ -1033,7 +1511,11 @@ def main() -> int:
             "feature_gate_count": len(feature_gate_configs),
             "constraints": {
                 "min_predicted_regime_count": args.min_predicted_regime_count,
-                "require_monotonic_forward_returns": not args.allow_non_monotonic_forward_returns,
+                "require_monotonic_forward_returns": args.require_monotonic_forward_returns,
+            },
+            "abstention": {
+                "thresholds": list(abstention_thresholds),
+                "min_trades": args.abstention_min_trades,
             },
             "heavy_buffers": {
                 "roc": two_stage.HEAVY_ROC_BUFFER,

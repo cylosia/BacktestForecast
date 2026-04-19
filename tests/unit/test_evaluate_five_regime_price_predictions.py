@@ -127,3 +127,112 @@ def test_candidate_constraint_summary_flags_count_and_monotonic_failures() -> No
         "min_predicted_regime_count",
         "monotonic_forward_returns",
     ]
+
+
+def test_bull_confidence_score_increases_as_indicators_move_further_past_thresholds() -> None:
+    bull_filter = module.two_stage.FilterConfig(roc_threshold=0.0, adx_threshold=14.0, rsi_threshold=55.0)
+
+    lower_score = module._bull_confidence_score(
+        filter_config=bull_filter,
+        indicator_triplet=(5.5, 18.5, 56.0),
+    )
+    higher_score = module._bull_confidence_score(
+        filter_config=bull_filter,
+        indicator_triplet=(12.0, 26.0, 66.0),
+    )
+
+    assert lower_score > 0.0
+    assert higher_score > lower_score
+
+
+def test_classify_regime_with_confidence_respects_feature_gates() -> None:
+    bull_filter = module.two_stage.FilterConfig(roc_threshold=0.0, adx_threshold=14.0, rsi_threshold=55.0)
+    bear_filter = module.two_stage.NegativeFilterConfig(roc_threshold=0.0, adx_threshold=18.0, rsi_threshold=45.0)
+    triplet = (8.0, 22.0, 62.0)
+
+    gated_regime, gated_confidence = module._classify_regime_with_confidence(
+        indicator_triplet=triplet,
+        bull_filter=bull_filter,
+        bear_filter=bear_filter,
+        feature_gate=module.FeatureGateConfig(ema_gap_threshold_pct=0.5, heavy_vol_threshold_pct=None),
+        context_row={"ema_gap_pct": 0.1, "realized_vol_pct": 40.0},
+    )
+    open_regime, open_confidence = module._classify_regime_with_confidence(
+        indicator_triplet=triplet,
+        bull_filter=bull_filter,
+        bear_filter=bear_filter,
+        feature_gate=module.FeatureGateConfig(ema_gap_threshold_pct=None, heavy_vol_threshold_pct=None),
+        context_row={"ema_gap_pct": 0.1, "realized_vol_pct": 40.0},
+    )
+
+    assert gated_regime == "neutral"
+    assert gated_confidence == 0.0
+    assert open_regime == "heavy_bullish"
+    assert open_confidence > 0.0
+
+
+def test_metric_ranking_key_precision_first_prefers_exactness_after_precision() -> None:
+    broader_metrics = {
+        "macro_precision_pct": 50.0,
+        "exact_accuracy_pct": 25.0,
+        "directional_accuracy_pct": 65.0,
+        "balanced_accuracy_pct": 45.0,
+        "macro_f1_pct": 40.0,
+        "observation_count": 100,
+    }
+    tighter_metrics = {
+        "macro_precision_pct": 50.0,
+        "exact_accuracy_pct": 30.0,
+        "directional_accuracy_pct": 60.0,
+        "balanced_accuracy_pct": 40.0,
+        "macro_f1_pct": 35.0,
+        "observation_count": 100,
+    }
+
+    assert module._metric_ranking_key(tighter_metrics, objective="precision_first") > module._metric_ranking_key(
+        broader_metrics,
+        objective="precision_first",
+    )
+
+
+def test_parse_args_defaults_to_allowing_non_monotonic_forward_returns(monkeypatch) -> None:
+    monkeypatch.setattr(sys, "argv", ["evaluate_five_regime_price_predictions.py", "--symbols", "AGQ"])
+
+    args = module._parse_args()
+
+    assert args.require_monotonic_forward_returns is False
+
+
+def test_parse_args_accepts_precision_first_objective(monkeypatch) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "evaluate_five_regime_price_predictions.py",
+            "--symbols",
+            "AGQ",
+            "--objective",
+            "precision_first",
+        ],
+    )
+
+    args = module._parse_args()
+
+    assert args.objective == "precision_first"
+
+
+def test_parse_args_can_require_monotonic_forward_returns(monkeypatch) -> None:
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "evaluate_five_regime_price_predictions.py",
+            "--symbols",
+            "AGQ",
+            "--require-monotonic-forward-returns",
+        ],
+    )
+
+    args = module._parse_args()
+
+    assert args.require_monotonic_forward_returns is True
