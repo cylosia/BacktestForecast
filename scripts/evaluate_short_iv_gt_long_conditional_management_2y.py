@@ -48,8 +48,12 @@ BEST_COMBINED_MEDIAN25TREND_MLLOGREG56_FILTER_POLICY_LABEL = (
     f"{BEST_COMBINED_TARGETED_UP_SKIP_ABSTAIN_HALF_SIZE_POLICY_LABEL}"
     "__skip_abstain_median25trend__skip_up_mllogreg56_conf_90_100"
 )
+BEST_COMBINED_DEBIT_SENSITIVE_UP_FILTER_POLICY_LABEL = (
+    f"{BEST_COMBINED_MEDIAN25TREND_MLLOGREG56_FILTER_POLICY_LABEL}"
+    "__skip_up_debit_sensitive_methods"
+)
 # Preferred downstream alias for the current combined policy.
-BEST_COMBINED_POLICY_LABEL = BEST_COMBINED_MEDIAN25TREND_MLLOGREG56_FILTER_POLICY_LABEL
+BEST_COMBINED_POLICY_LABEL = BEST_COMBINED_DEBIT_SENSITIVE_UP_FILTER_POLICY_LABEL
 BEST_COMBINED_SYMBOL_SIDE_LOOKBACK_FILTER_POLICY_LABEL = (
     f"{BEST_COMBINED_POLICY_LABEL}__symbol_side_52w_lookback_pnl_nonnegative"
 )
@@ -65,6 +69,13 @@ NEGATIVE_UP_CONFIDENCE_BUCKET_METHODS = frozenset(
         "median25trend",
     }
 )
+DEBIT_SENSITIVE_UP_METHOD_ENTRY_DEBIT_THRESHOLDS: dict[str, float] = {
+    "median25": 3.0,
+    "median15trend": 2.5,
+    "median25rsi": 2.0,
+    "mlgb76": 1.2,
+    "median30trend": 2.0,
+}
 POSITION_SIZED_VALUE_COLUMNS = (
     "original_entry_debit",
     "entry_debit",
@@ -415,6 +426,18 @@ def _is_high_confidence_up_mllogreg56_trade(row: dict[str, object]) -> bool:
         and confidence_pct is not None
         and 90.0 < confidence_pct <= 100.0
     )
+
+
+def _is_debit_sensitive_up_method_trade(row: dict[str, object]) -> bool:
+    if str(row.get("prediction")) != "up":
+        return False
+    method = str(row.get("selected_method"))
+    entry_debit_threshold = DEBIT_SENSITIVE_UP_METHOD_ENTRY_DEBIT_THRESHOLDS.get(method)
+    if entry_debit_threshold is None:
+        return False
+    raw_entry_debit = row.get("entry_debit")
+    entry_debit = _to_float(None if raw_entry_debit is None else str(raw_entry_debit))
+    return entry_debit is not None and entry_debit >= entry_debit_threshold
 
 
 def _scale_position_sized_value(value: object, *, position_size_weight: float) -> object:
@@ -827,6 +850,16 @@ def main() -> int:
             skip_trade_predicates=(
                 _is_abstain_median25trend_trade,
                 _is_high_confidence_up_mllogreg56_trade,
+            ),
+        )
+    )
+    detail_rows.extend(
+        _derive_skip_filtered_policy_rows(
+            rows=detail_rows,
+            source_policy_label=BEST_COMBINED_MEDIAN25TREND_MLLOGREG56_FILTER_POLICY_LABEL,
+            derived_policy_label=BEST_COMBINED_DEBIT_SENSITIVE_UP_FILTER_POLICY_LABEL,
+            skip_trade_predicates=(
+                _is_debit_sensitive_up_method_trade,
             ),
         )
     )

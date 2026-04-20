@@ -11,7 +11,7 @@ import evaluate_short_iv_gt_long_conditional_management_3weeks as module  # noqa
 def test_best_combined_policy_label_points_to_preferred_filtered_variant() -> None:
     assert (
         module.BEST_COMBINED_POLICY_LABEL
-        == module.BEST_COMBINED_MEDIAN25TREND_MLLOGREG56_FILTER_POLICY_LABEL
+        == module.BEST_COMBINED_DEBIT_SENSITIVE_UP_FILTER_POLICY_LABEL
     )
 
 
@@ -284,3 +284,41 @@ def test_derive_skip_filtered_policy_rows_preserves_existing_position_size_metad
     assert remaining["position_sizing_rule"] == "half_size_abstain_entry_debit_gt_4"
     assert remaining["entry_debit"] == 2.5
     assert remaining["pnl"] == -1.0
+
+
+def test_is_debit_sensitive_up_method_trade_uses_method_specific_thresholds() -> None:
+    assert module._is_debit_sensitive_up_method_trade(
+        {
+            "prediction": "up",
+            "selected_method": "median25",
+            "entry_debit": 3.0,
+        }
+    ) is True
+    assert module._is_debit_sensitive_up_method_trade(
+        {
+            "prediction": "up",
+            "selected_method": "median25",
+            "entry_debit": 2.99,
+        }
+    ) is False
+    assert module._is_debit_sensitive_up_method_trade(
+        {
+            "prediction": "up",
+            "selected_method": "mlgb76",
+            "entry_debit": 1.2,
+        }
+    ) is True
+    assert module._is_debit_sensitive_up_method_trade(
+        {
+            "prediction": "up",
+            "selected_method": "mlgb76",
+            "entry_debit": 1.19,
+        }
+    ) is False
+    assert module._is_debit_sensitive_up_method_trade(
+        {
+            "prediction": "abstain",
+            "selected_method": "median30trend",
+            "entry_debit": 2.5,
+        }
+    ) is False
