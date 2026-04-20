@@ -7,6 +7,7 @@ from collections import defaultdict, deque
 from datetime import date, timedelta
 from pathlib import Path
 from statistics import mean, median
+from typing import Callable
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
@@ -46,8 +47,12 @@ BEST_COMBINED_TARGETED_UP_SKIP_ABSTAIN_HALF_SIZE_POLICY_LABEL = (
     "__up_tp75_stop50_debit_gt_5_5_short_iv_lt_40"
     "__up_70_75_negative_method_skip__abstain_debit_gt_4_half_size"
 )
+BEST_COMBINED_MEDIAN25TREND_MLLOGREG56_FILTER_POLICY_LABEL = (
+    f"{BEST_COMBINED_TARGETED_UP_SKIP_ABSTAIN_HALF_SIZE_POLICY_LABEL}"
+    "__skip_abstain_median25trend__skip_up_mllogreg56_conf_90_100"
+)
 # Preferred downstream alias for the current combined policy.
-BEST_COMBINED_POLICY_LABEL = BEST_COMBINED_TARGETED_UP_SKIP_ABSTAIN_HALF_SIZE_POLICY_LABEL
+BEST_COMBINED_POLICY_LABEL = BEST_COMBINED_MEDIAN25TREND_MLLOGREG56_FILTER_POLICY_LABEL
 BEST_COMBINED_SYMBOL_SIDE_LOOKBACK_FILTER_POLICY_LABEL = (
     f"{BEST_COMBINED_POLICY_LABEL}__symbol_side_52w_lookback_pnl_nonnegative"
 )
@@ -385,6 +390,23 @@ def _is_negative_up_confidence_bucket_method_trade(row: dict[str, object]) -> bo
     )
 
 
+def _is_abstain_median25trend_trade(row: dict[str, object]) -> bool:
+    return (
+        str(row.get("prediction")) == "abstain"
+        and str(row.get("selected_method")) == "median25trend"
+    )
+
+
+def _is_high_confidence_up_mllogreg56_trade(row: dict[str, object]) -> bool:
+    confidence_pct = _to_float(str(row.get("confidence_pct")))
+    return (
+        str(row.get("prediction")) == "up"
+        and str(row.get("selected_method")) == "mllogreg56"
+        and confidence_pct is not None
+        and 90.0 < confidence_pct <= 100.0
+    )
+
+
 def _scale_position_sized_value(value: object, *, position_size_weight: float) -> object:
     if value in (None, ""):
         return value
@@ -446,6 +468,25 @@ def _derive_targeted_best_combined_variant_rows(
                 position_sizing_rule=position_sizing_rule,
             )
         )
+    return derived_rows
+
+
+def _derive_skip_filtered_policy_rows(
+    *,
+    rows: list[dict[str, object]],
+    source_policy_label: str,
+    derived_policy_label: str,
+    skip_trade_predicates: tuple[Callable[[dict[str, object]], bool], ...],
+) -> list[dict[str, object]]:
+    source_rows = [dict(row) for row in rows if str(row["policy_label"]) == source_policy_label]
+    source_rows.sort(key=lambda row: (str(row["entry_date"]), str(row["symbol"]), str(row["prediction"])))
+    derived_rows: list[dict[str, object]] = []
+    for row in source_rows:
+        if any(predicate(row) for predicate in skip_trade_predicates):
+            continue
+        candidate = dict(row)
+        candidate["policy_label"] = derived_policy_label
+        derived_rows.append(candidate)
     return derived_rows
 
 
@@ -791,8 +832,19 @@ def main() -> int:
         _derive_targeted_best_combined_variant_rows(
             rows=detail_rows,
             source_policy_label=BASE_BEST_COMBINED_POLICY_LABEL,
-            derived_policy_label=BEST_COMBINED_POLICY_LABEL,
+            derived_policy_label=BEST_COMBINED_TARGETED_UP_SKIP_ABSTAIN_HALF_SIZE_POLICY_LABEL,
             abstain_half_size_entry_debit_threshold=4.0,
+        )
+    )
+    detail_rows.extend(
+        _derive_skip_filtered_policy_rows(
+            rows=detail_rows,
+            source_policy_label=BEST_COMBINED_TARGETED_UP_SKIP_ABSTAIN_HALF_SIZE_POLICY_LABEL,
+            derived_policy_label=BEST_COMBINED_MEDIAN25TREND_MLLOGREG56_FILTER_POLICY_LABEL,
+            skip_trade_predicates=(
+                _is_abstain_median25trend_trade,
+                _is_high_confidence_up_mllogreg56_trade,
+            ),
         )
     )
     detail_rows.extend(

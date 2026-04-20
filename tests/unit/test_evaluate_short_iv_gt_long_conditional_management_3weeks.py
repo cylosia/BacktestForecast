@@ -8,10 +8,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 import evaluate_short_iv_gt_long_conditional_management_3weeks as module  # noqa: E402
 
 
-def test_best_combined_policy_label_points_to_preferred_half_size_variant() -> None:
+def test_best_combined_policy_label_points_to_preferred_filtered_variant() -> None:
     assert (
         module.BEST_COMBINED_POLICY_LABEL
-        == module.BEST_COMBINED_TARGETED_UP_SKIP_ABSTAIN_HALF_SIZE_POLICY_LABEL
+        == module.BEST_COMBINED_MEDIAN25TREND_MLLOGREG56_FILTER_POLICY_LABEL
     )
 
 
@@ -224,3 +224,63 @@ def test_derive_targeted_best_combined_variant_rows_half_sizes_expensive_abstain
     assert half_sized["pnl"] == -1.0
     assert half_sized["roll_net_debit"] == 0.2
     assert half_sized["roi_pct"] == -40.0
+
+
+def test_derive_skip_filtered_policy_rows_preserves_existing_position_size_metadata() -> None:
+    rows = [
+        {
+            "entry_date": "2025-01-10",
+            "symbol": "AAA",
+            "prediction": "abstain",
+            "policy_label": module.BEST_COMBINED_POLICY_LABEL,
+            "entry_debit": 2.5,
+            "pnl": -1.0,
+            "position_size_weight": 0.5,
+            "position_sizing_rule": "half_size_abstain_entry_debit_gt_4",
+            "selected_method": "mlgbp64",
+            "confidence_pct": "",
+        },
+        {
+            "entry_date": "2025-01-10",
+            "symbol": "BBB",
+            "prediction": "abstain",
+            "policy_label": module.BEST_COMBINED_POLICY_LABEL,
+            "entry_debit": 1.0,
+            "pnl": -0.5,
+            "position_size_weight": 1.0,
+            "position_sizing_rule": "",
+            "selected_method": "median25trend",
+            "confidence_pct": "",
+        },
+        {
+            "entry_date": "2025-01-10",
+            "symbol": "CCC",
+            "prediction": "up",
+            "policy_label": module.BEST_COMBINED_POLICY_LABEL,
+            "entry_debit": 1.5,
+            "pnl": -0.75,
+            "position_size_weight": 1.0,
+            "position_sizing_rule": "",
+            "selected_method": "mllogreg56",
+            "confidence_pct": 95.0,
+        },
+    ]
+
+    filtered = module._derive_skip_filtered_policy_rows(
+        rows=rows,
+        source_policy_label=module.BEST_COMBINED_POLICY_LABEL,
+        derived_policy_label="derived",
+        skip_trade_predicates=(
+            module._is_abstain_median25trend_trade,
+            module._is_high_confidence_up_mllogreg56_trade,
+        ),
+    )
+
+    assert len(filtered) == 1
+    remaining = filtered[0]
+    assert remaining["symbol"] == "AAA"
+    assert remaining["policy_label"] == "derived"
+    assert remaining["position_size_weight"] == 0.5
+    assert remaining["position_sizing_rule"] == "half_size_abstain_entry_debit_gt_4"
+    assert remaining["entry_debit"] == 2.5
+    assert remaining["pnl"] == -1.0
