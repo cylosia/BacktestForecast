@@ -24,14 +24,48 @@ DEFAULT_BEST_DELTA_CSV = LOGS / "short_iv_gt_long_calendar_delta_grid_2y_best_de
 DEFAULT_DELTA_TRADES_CSV = LOGS / "short_iv_gt_long_calendar_delta_grid_2y_trades.csv"
 DEFAULT_OUTPUT_TRADES_CSV = LOGS / "short_iv_gt_long_conditional_management_2y_selected_trades.csv"
 DEFAULT_OUTPUT_SUMMARY_CSV = LOGS / "short_iv_gt_long_conditional_management_2y_summary.csv"
-BEST_COMBINED_POLICY_LABEL = (
+BASE_BEST_COMBINED_POLICY_LABEL = (
     "best_combined_abstain_high_iv_or_piecewise_moderate_iv_or_midhigh_tested_exit"
     "__up_tp75_stop50_debit_gt_5_5_short_iv_lt_40"
 )
-BEST_COMBINED_SYMBOL_SIDE_LOOKBACK_FILTER_POLICY_LABEL = (
+BASE_BEST_COMBINED_SYMBOL_SIDE_LOOKBACK_FILTER_POLICY_LABEL = (
     "best_combined_abstain_high_iv_or_piecewise_moderate_iv_or_midhigh_tested_exit"
     "__up_tp75_stop50_debit_gt_5_5_short_iv_lt_40"
     "__symbol_side_52w_lookback_pnl_nonnegative"
+)
+BEST_COMBINED_TARGETED_UP_SKIP_POLICY_LABEL = (
+    "best_combined_abstain_high_iv_or_piecewise_moderate_iv_or_midhigh_tested_exit"
+    "__up_tp75_stop50_debit_gt_5_5_short_iv_lt_40"
+    "__up_70_75_negative_method_skip"
+)
+BEST_COMBINED_TARGETED_UP_SKIP_ABSTAIN_HALF_SIZE_POLICY_LABEL = (
+    "best_combined_abstain_high_iv_or_piecewise_moderate_iv_or_midhigh_tested_exit"
+    "__up_tp75_stop50_debit_gt_5_5_short_iv_lt_40"
+    "__up_70_75_negative_method_skip__abstain_debit_gt_4_half_size"
+)
+# Preferred downstream alias for the current combined policy.
+BEST_COMBINED_POLICY_LABEL = BEST_COMBINED_TARGETED_UP_SKIP_ABSTAIN_HALF_SIZE_POLICY_LABEL
+BEST_COMBINED_SYMBOL_SIDE_LOOKBACK_FILTER_POLICY_LABEL = (
+    f"{BEST_COMBINED_POLICY_LABEL}__symbol_side_52w_lookback_pnl_nonnegative"
+)
+NEGATIVE_UP_CONFIDENCE_BUCKET_METHODS = frozenset(
+    {
+        "mllogreg56",
+        "mlgbp64",
+        "mlgbp72",
+        "median40rsi",
+        "vote15rsi",
+        "mlgb70",
+        "vote30trend",
+        "median25trend",
+    }
+)
+POSITION_SIZED_VALUE_COLUMNS = (
+    "original_entry_debit",
+    "entry_debit",
+    "spread_mark",
+    "pnl",
+    "roll_net_debit",
 )
 
 
@@ -268,6 +302,8 @@ def _with_metadata(
         condition_up_debit_gt_5_5 and condition_up_short_iv_lt_40
     )
     enriched["management_applied"] = int(management_applied)
+    enriched["position_size_weight"] = 1.0
+    enriched["position_sizing_rule"] = ""
     return enriched
 
 
@@ -347,6 +383,80 @@ def _derive_symbol_side_lookback_filtered_rows(
             history_by_key[key].append((entry_date, pnl))
             pnl_sum_by_key[key] += pnl
     return filtered_rows
+
+
+def _is_negative_up_confidence_bucket_method_trade(row: dict[str, object]) -> bool:
+    confidence_pct = _to_float(str(row.get("confidence_pct")))
+    return (
+        str(row.get("prediction")) == "up"
+        and confidence_pct is not None
+        and 70.0 < confidence_pct <= 75.0
+        and str(row.get("selected_method")) in NEGATIVE_UP_CONFIDENCE_BUCKET_METHODS
+    )
+
+
+def _scale_position_sized_value(value: object, *, position_size_weight: float) -> object:
+    if value in (None, ""):
+        return value
+    try:
+        return _round_or_none(float(value) * position_size_weight)
+    except (TypeError, ValueError):
+        return value
+
+
+def _clone_position_sized_trade_row(
+    row: dict[str, object],
+    *,
+    derived_policy_label: str,
+    position_size_weight: float,
+    position_sizing_rule: str,
+) -> dict[str, object]:
+    candidate = dict(row)
+    candidate["policy_label"] = derived_policy_label
+    candidate["position_size_weight"] = _round_or_none(position_size_weight, digits=4)
+    candidate["position_sizing_rule"] = position_sizing_rule
+    if position_size_weight != 1.0:
+        for field in POSITION_SIZED_VALUE_COLUMNS:
+            candidate[field] = _scale_position_sized_value(
+                candidate.get(field),
+                position_size_weight=position_size_weight,
+            )
+    return candidate
+
+
+def _derive_targeted_best_combined_variant_rows(
+    *,
+    rows: list[dict[str, object]],
+    source_policy_label: str,
+    derived_policy_label: str,
+    abstain_half_size_entry_debit_threshold: float | None = None,
+) -> list[dict[str, object]]:
+    source_rows = [dict(row) for row in rows if str(row["policy_label"]) == source_policy_label]
+    source_rows.sort(key=lambda row: (str(row["entry_date"]), str(row["symbol"]), str(row["prediction"])))
+    derived_rows: list[dict[str, object]] = []
+    for row in source_rows:
+        position_size_weight = 1.0
+        position_sizing_rule = ""
+        if _is_negative_up_confidence_bucket_method_trade(row):
+            continue
+        if (
+            abstain_half_size_entry_debit_threshold is not None
+            and str(row.get("prediction")) == "abstain"
+            and float(row["entry_debit"]) > abstain_half_size_entry_debit_threshold
+        ):
+            position_size_weight = 0.5
+            position_sizing_rule = (
+                f"half_size_abstain_entry_debit_gt_{abstain_half_size_entry_debit_threshold:g}"
+            )
+        derived_rows.append(
+            _clone_position_sized_trade_row(
+                row,
+                derived_policy_label=derived_policy_label,
+                position_size_weight=position_size_weight,
+                position_sizing_rule=position_sizing_rule,
+            )
+        )
+    return derived_rows
 
 
 def main() -> int:
@@ -606,7 +716,7 @@ def main() -> int:
                         ),
                     ),
                     (
-                        BEST_COMBINED_POLICY_LABEL,
+                        BASE_BEST_COMBINED_POLICY_LABEL,
                         combined_abstain_extended_row if prediction == "abstain" else up_tp75_stop50_row,
                         (
                             (
@@ -654,10 +764,32 @@ def main() -> int:
         raise SystemExit("No 2-year conditional management rows were produced.")
 
     detail_rows.extend(
+        _derive_targeted_best_combined_variant_rows(
+            rows=detail_rows,
+            source_policy_label=BASE_BEST_COMBINED_POLICY_LABEL,
+            derived_policy_label=BEST_COMBINED_TARGETED_UP_SKIP_POLICY_LABEL,
+        )
+    )
+    detail_rows.extend(
+        _derive_targeted_best_combined_variant_rows(
+            rows=detail_rows,
+            source_policy_label=BASE_BEST_COMBINED_POLICY_LABEL,
+            derived_policy_label=BEST_COMBINED_POLICY_LABEL,
+            abstain_half_size_entry_debit_threshold=4.0,
+        )
+    )
+    detail_rows.extend(
         _derive_symbol_side_lookback_filtered_rows(
             rows=detail_rows,
             source_policy_label=BEST_COMBINED_POLICY_LABEL,
             derived_policy_label=BEST_COMBINED_SYMBOL_SIDE_LOOKBACK_FILTER_POLICY_LABEL,
+        )
+    )
+    detail_rows.extend(
+        _derive_symbol_side_lookback_filtered_rows(
+            rows=detail_rows,
+            source_policy_label=BASE_BEST_COMBINED_POLICY_LABEL,
+            derived_policy_label=BASE_BEST_COMBINED_SYMBOL_SIDE_LOOKBACK_FILTER_POLICY_LABEL,
         )
     )
 
