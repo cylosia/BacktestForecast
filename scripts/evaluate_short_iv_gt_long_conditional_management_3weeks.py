@@ -29,37 +29,69 @@ DEFAULT_OUTPUT_TRADES_CSV = LOGS / "short_iv_gt_long_conditional_management_3wee
 DEFAULT_OUTPUT_SUMMARY_CSV = LOGS / "short_iv_gt_long_conditional_management_3weeks_summary.csv"
 DEFAULT_VIX_CACHE_CSV = vix_regime.DEFAULT_VIX_CACHE_CSV
 BASE_BEST_COMBINED_POLICY_LABEL = (
-    "best_combined_abstain_high_iv_or_piecewise_moderate_iv_or_midhigh_tested_exit"
-    "__up_tp75_stop50_debit_gt_5_5_short_iv_lt_40"
+    "best_combined_abstain_tp25_stop35_high_iv_or_piecewise_moderate_iv"
+    "__up_tp75_stop65_debit_gt_5_5_short_iv_lt_40"
+)
+BASE_BEST_COMBINED_METHOD_SIDE_EXIT_POLICY_LABEL = (
+    f"{BASE_BEST_COMBINED_POLICY_LABEL}"
+    "__abstain_mlgbp64_tp0_stop50__abstain_mlgbp72_tp0_stop65"
 )
 BASE_BEST_COMBINED_SYMBOL_SIDE_LOOKBACK_FILTER_POLICY_LABEL = (
-    "best_combined_abstain_high_iv_or_piecewise_moderate_iv_or_midhigh_tested_exit"
-    "__up_tp75_stop50_debit_gt_5_5_short_iv_lt_40"
-    "__symbol_side_52w_lookback_pnl_nonnegative"
+    f"{BASE_BEST_COMBINED_POLICY_LABEL}__symbol_side_52w_lookback_pnl_nonnegative"
+)
+BASE_BEST_COMBINED_METHOD_SIDE_EXIT_SYMBOL_SIDE_LOOKBACK_FILTER_POLICY_LABEL = (
+    f"{BASE_BEST_COMBINED_METHOD_SIDE_EXIT_POLICY_LABEL}__symbol_side_52w_lookback_pnl_nonnegative"
 )
 BEST_COMBINED_TARGETED_UP_SKIP_POLICY_LABEL = (
-    "best_combined_abstain_high_iv_or_piecewise_moderate_iv_or_midhigh_tested_exit"
-    "__up_tp75_stop50_debit_gt_5_5_short_iv_lt_40"
-    "__up_70_75_negative_method_skip"
+    f"{BASE_BEST_COMBINED_POLICY_LABEL}__up_70_75_negative_method_skip"
+)
+BEST_COMBINED_METHOD_SIDE_EXIT_TARGETED_UP_SKIP_POLICY_LABEL = (
+    f"{BASE_BEST_COMBINED_METHOD_SIDE_EXIT_POLICY_LABEL}__up_70_75_negative_method_skip"
 )
 BEST_COMBINED_TARGETED_UP_SKIP_ABSTAIN_HALF_SIZE_POLICY_LABEL = (
-    "best_combined_abstain_high_iv_or_piecewise_moderate_iv_or_midhigh_tested_exit"
-    "__up_tp75_stop50_debit_gt_5_5_short_iv_lt_40"
-    "__up_70_75_negative_method_skip__abstain_debit_gt_4_half_size"
+    f"{BEST_COMBINED_TARGETED_UP_SKIP_POLICY_LABEL}__abstain_debit_gt_4_half_size"
+)
+BEST_COMBINED_METHOD_SIDE_EXIT_TARGETED_UP_SKIP_ABSTAIN_HALF_SIZE_POLICY_LABEL = (
+    f"{BEST_COMBINED_METHOD_SIDE_EXIT_TARGETED_UP_SKIP_POLICY_LABEL}__abstain_debit_gt_4_half_size"
 )
 BEST_COMBINED_MEDIAN25TREND_MLLOGREG56_FILTER_POLICY_LABEL = (
     f"{BEST_COMBINED_TARGETED_UP_SKIP_ABSTAIN_HALF_SIZE_POLICY_LABEL}"
+    "__skip_abstain_median25trend__skip_up_mllogreg56_conf_90_100"
+)
+BEST_COMBINED_METHOD_SIDE_EXIT_MEDIAN25TREND_MLLOGREG56_FILTER_POLICY_LABEL = (
+    f"{BEST_COMBINED_METHOD_SIDE_EXIT_TARGETED_UP_SKIP_ABSTAIN_HALF_SIZE_POLICY_LABEL}"
     "__skip_abstain_median25trend__skip_up_mllogreg56_conf_90_100"
 )
 BEST_COMBINED_DEBIT_SENSITIVE_UP_FILTER_POLICY_LABEL = (
     f"{BEST_COMBINED_MEDIAN25TREND_MLLOGREG56_FILTER_POLICY_LABEL}"
     "__skip_up_debit_sensitive_methods"
 )
-# Preferred downstream alias for the current combined policy.
-BEST_COMBINED_POLICY_LABEL = BEST_COMBINED_DEBIT_SENSITIVE_UP_FILTER_POLICY_LABEL
-BEST_COMBINED_SYMBOL_SIDE_LOOKBACK_FILTER_POLICY_LABEL = (
-    f"{BEST_COMBINED_POLICY_LABEL}__symbol_side_52w_lookback_pnl_nonnegative"
+BEST_COMBINED_METHOD_SIDE_EXIT_DEBIT_SENSITIVE_UP_FILTER_POLICY_LABEL = (
+    f"{BEST_COMBINED_METHOD_SIDE_EXIT_MEDIAN25TREND_MLLOGREG56_FILTER_POLICY_LABEL}"
+    "__skip_up_debit_sensitive_methods"
 )
+BEST_COMBINED_METHOD_SIDE_EXIT_DEBIT_SENSITIVE_ABSTAIN_FILTER_POLICY_LABEL = (
+    f"{BEST_COMBINED_METHOD_SIDE_EXIT_DEBIT_SENSITIVE_UP_FILTER_POLICY_LABEL}"
+    "__skip_abstain_debit_sensitive_methods"
+)
+# Preferred uncapped method-side variant before any portfolio-cap ranking.
+BEST_COMBINED_METHOD_SIDE_EXIT_POLICY_LABEL = (
+    BEST_COMBINED_METHOD_SIDE_EXIT_DEBIT_SENSITIVE_ABSTAIN_FILTER_POLICY_LABEL
+)
+BEST_COMBINED_SYMBOL_SIDE_LOOKBACK_FILTER_POLICY_LABEL = (
+    f"{BEST_COMBINED_METHOD_SIDE_EXIT_POLICY_LABEL}__symbol_side_52w_lookback_pnl_nonnegative"
+)
+BEST_COMBINED_METHOD_SIDE_EXIT_SYMBOL_SIDE_LOOKBACK_FILTER_POLICY_LABEL = (
+    f"{BEST_COMBINED_METHOD_SIDE_EXIT_POLICY_LABEL}__symbol_side_52w_lookback_pnl_nonnegative"
+)
+BEST_COMBINED_TOP18_SYMBOL_MEDIAN_ROI_MIN1_POLICY_LABEL = (
+    f"{BEST_COMBINED_METHOD_SIDE_EXIT_POLICY_LABEL}__top18_52w_symbol_median_roi_min1"
+)
+BEST_COMBINED_TOP18_SYMBOL_MEDIAN_ROI_MIN3_POLICY_LABEL = (
+    f"{BEST_COMBINED_METHOD_SIDE_EXIT_POLICY_LABEL}__top18_52w_symbol_median_roi_min3"
+)
+# Preferred downstream alias for the current combined policy.
+BEST_COMBINED_POLICY_LABEL = BEST_COMBINED_METHOD_SIDE_EXIT_POLICY_LABEL
 NEGATIVE_UP_CONFIDENCE_BUCKET_METHODS = frozenset(
     {
         "mllogreg56",
@@ -79,6 +111,19 @@ DEBIT_SENSITIVE_UP_METHOD_ENTRY_DEBIT_THRESHOLDS: dict[str, float] = {
     "mlgb76": 1.2,
     "median30trend": 2.0,
 }
+DEBIT_SENSITIVE_ABSTAIN_METHOD_ENTRY_DEBIT_RANGES: dict[str, tuple[tuple[float, float], ...]] = {
+    "median40rsi": ((1.0, 1.5), (2.0, 3.0)),
+    "mlgb70": ((1.0, 1.5),),
+    "mlgb72": ((0.5, 1.0),),
+}
+ABSTAIN_METHOD_SIDE_TP_STOP_OVERRIDES: dict[str, tuple[float, float]] = {
+    "mlgbp64": (0.0, 50.0),
+    "mlgbp72": (0.0, 65.0),
+}
+DEFAULT_ABSTAIN_TAKE_PROFIT_PCT = 25.0
+DEFAULT_ABSTAIN_STOP_LOSS_PCT = 35.0
+DEFAULT_UP_TAKE_PROFIT_PCT = 75.0
+DEFAULT_UP_STOP_LOSS_PCT = 65.0
 POSITION_SIZED_VALUE_COLUMNS = (
     "original_entry_debit",
     "entry_debit",
@@ -391,6 +436,60 @@ def _derive_symbol_side_lookback_filtered_rows(
     return filtered_rows
 
 
+def _derive_symbol_median_roi_topk_rows(
+    *,
+    rows: list[dict[str, object]],
+    source_policy_label: str,
+    derived_policy_label: str,
+    top_k: int,
+    min_history_trades: int = 1,
+    lookback_days: int = 364,
+) -> list[dict[str, object]]:
+    if top_k <= 0:
+        return []
+    source_rows = [dict(row) for row in rows if str(row["policy_label"]) == source_policy_label]
+    source_rows.sort(key=lambda row: (str(row["entry_date"]), str(row["symbol"]), str(row["prediction"])))
+    weekly_rows_by_date: dict[str, list[dict[str, object]]] = defaultdict(list)
+    for row in source_rows:
+        weekly_rows_by_date[str(row["entry_date"])].append(row)
+    history_by_symbol: dict[str, deque[tuple[date, float]]] = defaultdict(deque)
+    derived_rows: list[dict[str, object]] = []
+
+    for entry_date_text in sorted(weekly_rows_by_date):
+        entry_date = date.fromisoformat(entry_date_text)
+        cutoff_date = entry_date - timedelta(days=lookback_days)
+        ranked_candidates: list[tuple[dict[str, object], float | None, int]] = []
+        for row in weekly_rows_by_date[entry_date_text]:
+            symbol = str(row["symbol"])
+            history = history_by_symbol[symbol]
+            while history and history[0][0] < cutoff_date:
+                history.popleft()
+            score = None
+            if len(history) >= min_history_trades:
+                score = median(value for _, value in history)
+            ranked_candidates.append((row, score, len(history)))
+        ranked_candidates.sort(
+            key=lambda item: (
+                1 if item[1] is None else 0,
+                0.0 if item[1] is None else -float(item[1]),
+                -item[2],
+                str(item[0]["symbol"]),
+                str(item[0]["prediction"]),
+            )
+        )
+        for row, _, _ in ranked_candidates[:top_k]:
+            candidate = dict(row)
+            candidate["policy_label"] = derived_policy_label
+            derived_rows.append(candidate)
+        for row in weekly_rows_by_date[entry_date_text]:
+            entry_debit = _to_float(str(row.get("entry_debit")))
+            roi_pct = _to_float(str(row.get("roi_pct")))
+            if entry_debit is None or entry_debit <= 0 or roi_pct is None:
+                continue
+            history_by_symbol[str(row["symbol"])].append((entry_date, roi_pct))
+    return derived_rows
+
+
 def _is_negative_up_confidence_bucket_method_trade(row: dict[str, object]) -> bool:
     confidence_pct = _to_float(str(row.get("confidence_pct")))
     return (
@@ -428,6 +527,43 @@ def _is_debit_sensitive_up_method_trade(row: dict[str, object]) -> bool:
     raw_entry_debit = row.get("entry_debit")
     entry_debit = _to_float(None if raw_entry_debit is None else str(raw_entry_debit))
     return entry_debit is not None and entry_debit >= entry_debit_threshold
+
+
+def _is_debit_sensitive_abstain_method_trade(row: dict[str, object]) -> bool:
+    if str(row.get("prediction")) != "abstain":
+        return False
+    method = str(row.get("selected_method"))
+    entry_debit_ranges = DEBIT_SENSITIVE_ABSTAIN_METHOD_ENTRY_DEBIT_RANGES.get(method)
+    if entry_debit_ranges is None:
+        return False
+    raw_entry_debit = row.get("entry_debit")
+    entry_debit = _to_float(None if raw_entry_debit is None else str(raw_entry_debit))
+    if entry_debit is None:
+        return False
+    return any(lower <= entry_debit < upper for lower, upper in entry_debit_ranges)
+
+
+def _select_abstain_method_side_exit_row(
+    *,
+    prediction: str,
+    selected_method: str,
+    default_row: dict[str, object],
+    override_rows_by_method: dict[str, dict[str, object]],
+) -> dict[str, object]:
+    if prediction != "abstain":
+        return default_row
+    return override_rows_by_method.get(selected_method, default_row)
+
+
+def resolve_method_side_tp_stop(*, prediction: str, selected_method: str) -> tuple[float, float]:
+    if prediction == "up":
+        return DEFAULT_UP_TAKE_PROFIT_PCT, DEFAULT_UP_STOP_LOSS_PCT
+    if prediction == "abstain":
+        return ABSTAIN_METHOD_SIDE_TP_STOP_OVERRIDES.get(
+            selected_method,
+            (DEFAULT_ABSTAIN_TAKE_PROFIT_PCT, DEFAULT_ABSTAIN_STOP_LOSS_PCT),
+        )
+    raise ValueError(f"Unsupported prediction for method-side TP/SL mapping: {prediction}")
 
 
 def _scale_position_sized_value(value: object, *, position_size_weight: float) -> object:
@@ -691,6 +827,31 @@ def main() -> int:
                     take_profit_pct=75.0,
                     stop_loss_pct=50.0,
                 )
+                up_tp75_stop65_row = mgmt._simulate_tp_stop(
+                    trade_row=trade_row,
+                    option_rows_by_date=option_rows_by_date,
+                    spot_by_date=spot_by_date,
+                    path_dates=path_dates,
+                    take_profit_pct=75.0,
+                    stop_loss_pct=65.0,
+                )
+                abstain_method_side_override_rows = {
+                    method: mgmt._simulate_tp_stop(
+                        trade_row=trade_row,
+                        option_rows_by_date=option_rows_by_date,
+                        spot_by_date=spot_by_date,
+                        path_dates=path_dates,
+                        take_profit_pct=take_profit_pct,
+                        stop_loss_pct=stop_loss_pct,
+                    )
+                    for method, (take_profit_pct, stop_loss_pct) in ABSTAIN_METHOD_SIDE_TP_STOP_OVERRIDES.items()
+                }
+                method_side_abstain_row = _select_abstain_method_side_exit_row(
+                    prediction=prediction,
+                    selected_method=str(trade_row["selected_method"]),
+                    default_row=tp25_row,
+                    override_rows_by_method=abstain_method_side_override_rows,
+                )
                 condition_abstain_high_iv_or_piecewise_moderate_iv = (
                     (condition_debit_gt_2_5 and condition_short_iv_gt_100)
                     or condition_abstain_piecewise_moderate_iv
@@ -767,6 +928,11 @@ def main() -> int:
                         condition_up_debit_gt_5_5 and condition_up_short_iv_lt_40,
                     ),
                     (
+                        "best_up_tp75_stop65_debit_gt_5_5_short_iv_lt_40",
+                        up_tp75_stop65_row,
+                        condition_up_debit_gt_5_5 and condition_up_short_iv_lt_40,
+                    ),
+                    (
                         "best_combined_abstain_tp25_stop35_debit_gt_2_5_short_iv_gt_100__up_tp75_stop50_debit_gt_5_5_short_iv_lt_40",
                         tp25_row if prediction == "abstain" else up_tp75_stop50_row,
                         (
@@ -791,14 +957,26 @@ def main() -> int:
                     ),
                     (
                         BASE_BEST_COMBINED_POLICY_LABEL,
-                        combined_abstain_extended_row if prediction == "abstain" else up_tp75_stop50_row,
+                        tp25_row if prediction == "abstain" else up_tp75_stop65_row,
                         (
                             (
                                 prediction == "abstain"
-                                and (
-                                    condition_abstain_high_iv_or_piecewise_moderate_iv
-                                    or condition_abstain_midhigh_iv_tested_exit
-                                )
+                                and condition_abstain_high_iv_or_piecewise_moderate_iv
+                            )
+                            or (
+                                prediction == "up"
+                                and condition_up_debit_gt_5_5
+                                and condition_up_short_iv_lt_40
+                            )
+                        ),
+                    ),
+                    (
+                        BASE_BEST_COMBINED_METHOD_SIDE_EXIT_POLICY_LABEL,
+                        method_side_abstain_row if prediction == "abstain" else up_tp75_stop65_row,
+                        (
+                            (
+                                prediction == "abstain"
+                                and condition_abstain_high_iv_or_piecewise_moderate_iv
                             )
                             or (
                                 prediction == "up"
@@ -860,10 +1038,36 @@ def main() -> int:
         )
     )
     detail_rows.extend(
+        _derive_targeted_best_combined_variant_rows(
+            rows=detail_rows,
+            source_policy_label=BASE_BEST_COMBINED_METHOD_SIDE_EXIT_POLICY_LABEL,
+            derived_policy_label=BEST_COMBINED_METHOD_SIDE_EXIT_TARGETED_UP_SKIP_POLICY_LABEL,
+        )
+    )
+    detail_rows.extend(
+        _derive_targeted_best_combined_variant_rows(
+            rows=detail_rows,
+            source_policy_label=BASE_BEST_COMBINED_METHOD_SIDE_EXIT_POLICY_LABEL,
+            derived_policy_label=BEST_COMBINED_METHOD_SIDE_EXIT_TARGETED_UP_SKIP_ABSTAIN_HALF_SIZE_POLICY_LABEL,
+            abstain_half_size_entry_debit_threshold=4.0,
+        )
+    )
+    detail_rows.extend(
         _derive_skip_filtered_policy_rows(
             rows=detail_rows,
             source_policy_label=BEST_COMBINED_TARGETED_UP_SKIP_ABSTAIN_HALF_SIZE_POLICY_LABEL,
             derived_policy_label=BEST_COMBINED_MEDIAN25TREND_MLLOGREG56_FILTER_POLICY_LABEL,
+            skip_trade_predicates=(
+                _is_abstain_median25trend_trade,
+                _is_high_confidence_up_mllogreg56_trade,
+            ),
+        )
+    )
+    detail_rows.extend(
+        _derive_skip_filtered_policy_rows(
+            rows=detail_rows,
+            source_policy_label=BEST_COMBINED_METHOD_SIDE_EXIT_TARGETED_UP_SKIP_ABSTAIN_HALF_SIZE_POLICY_LABEL,
+            derived_policy_label=BEST_COMBINED_METHOD_SIDE_EXIT_MEDIAN25TREND_MLLOGREG56_FILTER_POLICY_LABEL,
             skip_trade_predicates=(
                 _is_abstain_median25trend_trade,
                 _is_high_confidence_up_mllogreg56_trade,
@@ -881,9 +1085,29 @@ def main() -> int:
         )
     )
     detail_rows.extend(
+        _derive_skip_filtered_policy_rows(
+            rows=detail_rows,
+            source_policy_label=BEST_COMBINED_METHOD_SIDE_EXIT_MEDIAN25TREND_MLLOGREG56_FILTER_POLICY_LABEL,
+            derived_policy_label=BEST_COMBINED_METHOD_SIDE_EXIT_DEBIT_SENSITIVE_UP_FILTER_POLICY_LABEL,
+            skip_trade_predicates=(
+                _is_debit_sensitive_up_method_trade,
+            ),
+        )
+    )
+    detail_rows.extend(
+        _derive_skip_filtered_policy_rows(
+            rows=detail_rows,
+            source_policy_label=BEST_COMBINED_METHOD_SIDE_EXIT_DEBIT_SENSITIVE_UP_FILTER_POLICY_LABEL,
+            derived_policy_label=BEST_COMBINED_METHOD_SIDE_EXIT_DEBIT_SENSITIVE_ABSTAIN_FILTER_POLICY_LABEL,
+            skip_trade_predicates=(
+                _is_debit_sensitive_abstain_method_trade,
+            ),
+        )
+    )
+    detail_rows.extend(
         _derive_symbol_side_lookback_filtered_rows(
             rows=detail_rows,
-            source_policy_label=BEST_COMBINED_POLICY_LABEL,
+            source_policy_label=BEST_COMBINED_METHOD_SIDE_EXIT_POLICY_LABEL,
             derived_policy_label=BEST_COMBINED_SYMBOL_SIDE_LOOKBACK_FILTER_POLICY_LABEL,
         )
     )
@@ -892,6 +1116,38 @@ def main() -> int:
             rows=detail_rows,
             source_policy_label=BASE_BEST_COMBINED_POLICY_LABEL,
             derived_policy_label=BASE_BEST_COMBINED_SYMBOL_SIDE_LOOKBACK_FILTER_POLICY_LABEL,
+        )
+    )
+    detail_rows.extend(
+        _derive_symbol_side_lookback_filtered_rows(
+            rows=detail_rows,
+            source_policy_label=BEST_COMBINED_METHOD_SIDE_EXIT_POLICY_LABEL,
+            derived_policy_label=BEST_COMBINED_METHOD_SIDE_EXIT_SYMBOL_SIDE_LOOKBACK_FILTER_POLICY_LABEL,
+        )
+    )
+    detail_rows.extend(
+        _derive_symbol_side_lookback_filtered_rows(
+            rows=detail_rows,
+            source_policy_label=BASE_BEST_COMBINED_METHOD_SIDE_EXIT_POLICY_LABEL,
+            derived_policy_label=BASE_BEST_COMBINED_METHOD_SIDE_EXIT_SYMBOL_SIDE_LOOKBACK_FILTER_POLICY_LABEL,
+        )
+    )
+    detail_rows.extend(
+        _derive_symbol_median_roi_topk_rows(
+            rows=detail_rows,
+            source_policy_label=BEST_COMBINED_METHOD_SIDE_EXIT_POLICY_LABEL,
+            derived_policy_label=BEST_COMBINED_TOP18_SYMBOL_MEDIAN_ROI_MIN1_POLICY_LABEL,
+            top_k=18,
+            min_history_trades=1,
+        )
+    )
+    detail_rows.extend(
+        _derive_symbol_median_roi_topk_rows(
+            rows=detail_rows,
+            source_policy_label=BEST_COMBINED_METHOD_SIDE_EXIT_POLICY_LABEL,
+            derived_policy_label=BEST_COMBINED_TOP18_SYMBOL_MEDIAN_ROI_MIN3_POLICY_LABEL,
+            top_k=18,
+            min_history_trades=3,
         )
     )
 
