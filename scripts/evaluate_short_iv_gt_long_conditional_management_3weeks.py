@@ -105,6 +105,42 @@ BEST_COMBINED_WORST_METHOD_SKIP_POLICY_LABEL = (
 BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN3_WORST_METHOD_SKIP_POLICY_LABEL = (
     f"{BEST_COMBINED_WORST_METHOD_SKIP_POLICY_LABEL}__top43_52w_symbol_median_roi_min3"
 )
+BEST_COMBINED_EXTENDED_WORST_METHOD_SKIP_POLICY_LABEL = (
+    f"{BEST_COMBINED_WORST_METHOD_SKIP_POLICY_LABEL}__skip_mlgb68"
+)
+BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN3_EXTENDED_WORST_METHOD_SKIP_POLICY_LABEL = (
+    f"{BEST_COMBINED_EXTENDED_WORST_METHOD_SKIP_POLICY_LABEL}__top43_52w_symbol_median_roi_min3"
+)
+BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN3_WORST_METHOD_SKIP_METHOD_CAP12_POLICY_LABEL = (
+    f"{BEST_COMBINED_WORST_METHOD_SKIP_POLICY_LABEL}__top43_52w_symbol_median_roi_min3__method_cap12"
+)
+BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN3_WORST_METHOD_SKIP_METHOD_CAPS_10_10_2_POLICY_LABEL = (
+    f"{BEST_COMBINED_WORST_METHOD_SKIP_POLICY_LABEL}"
+    "__top43_52w_symbol_median_roi_min3__mlgbp72_cap10__mlgb76_cap10__median40rsi_cap2"
+)
+BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN3_WORST_METHOD_SKIP_METHOD_CAPS_9_10_2_POLICY_LABEL = (
+    f"{BEST_COMBINED_WORST_METHOD_SKIP_POLICY_LABEL}"
+    "__top43_52w_symbol_median_roi_min3__mlgbp72_cap9__mlgb76_cap10__median40rsi_cap2"
+)
+BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN3_WORST_METHOD_SKIP_METHOD_CAP12_P25_NONNEG_POLICY_LABEL = (
+    f"{BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN3_WORST_METHOD_SKIP_METHOD_CAP12_POLICY_LABEL}"
+    "__p25_nonnegative"
+)
+BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN5_WORST_METHOD_SKIP_METHOD_CAP12_POLICY_LABEL = (
+    f"{BEST_COMBINED_WORST_METHOD_SKIP_POLICY_LABEL}__top43_52w_symbol_median_roi_min5__method_cap12"
+)
+BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN3_WORST_METHOD_SKIP_VIX_ABS_GT_10_HALF_SIZE_POLICY_LABEL = (
+    f"{BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN3_WORST_METHOD_SKIP_POLICY_LABEL}"
+    "__vix_abs_weekly_change_gt_10_half_size"
+)
+BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN3_WORST_METHOD_SKIP_METHOD_CAP12_STRESS_METHOD_HALF_SIZE_POLICY_LABEL = (
+    f"{BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN3_WORST_METHOD_SKIP_METHOD_CAP12_POLICY_LABEL}"
+    "__stress_median40rsi_mllogreg56_half_size"
+)
+BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN3_WORST_METHOD_SKIP_METHOD_CAP12_WEEKLY_DEBIT_BUDGET40_POLICY_LABEL = (
+    f"{BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN3_WORST_METHOD_SKIP_METHOD_CAP12_POLICY_LABEL}"
+    "__weekly_debit_budget_40"
+)
 BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN3_ABSTAIN_CAP29_POLICY_LABEL = (
     f"{BEST_COMBINED_METHOD_SIDE_EXIT_POLICY_LABEL}__top43_52w_symbol_median_roi_min3__abstain_cap29"
 )
@@ -116,11 +152,19 @@ BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MINUS_NEGATIVE_P25_MIN3_POLICY_LABEL = (
 BEST_COMBINED_POLICY_LABEL = BEST_COMBINED_METHOD_SIDE_EXIT_POLICY_LABEL
 # Preferred ranked/capped portfolio variant after drawdown comparison.
 BEST_COMBINED_PORTFOLIO_POLICY_LABEL = (
-    BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN3_WORST_METHOD_SKIP_POLICY_LABEL
+    BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN3_WORST_METHOD_SKIP_METHOD_CAP12_POLICY_LABEL
 )
 BEST_COMBINED_PORTFOLIO_LIVE_POLICY_LABEL = f"{BEST_COMBINED_PORTFOLIO_POLICY_LABEL}_live"
 DEFAULT_TOP43_ABSTAIN_CAP = 29
+DEFAULT_TOP43_METHOD_CAP = 12
+TIGHT_METHOD_CAPS_10_10_2 = {"mlgbp72": 10, "mlgb76": 10, "median40rsi": 2}
+TIGHT_METHOD_CAPS_9_10_2 = {"mlgbp72": 9, "mlgb76": 10, "median40rsi": 2}
+DEFAULT_SOFT_VIX_HALF_SIZE_THRESHOLD_PCT = 10.0
+DEFAULT_STRESS_METHOD_VIX_THRESHOLD_PCT = 10.0
+DEFAULT_WEEKLY_DEBIT_BUDGET = 40.0
 WORST_METHOD_SKIP_METHODS = frozenset({"vote40rsi", "mlgbp68"})
+EXTENDED_WORST_METHOD_SKIP_METHODS = frozenset({"vote40rsi", "mlgbp68", "mlgb68"})
+STRESS_HALF_SIZE_METHODS = frozenset({"median40rsi", "mllogreg56"})
 NEGATIVE_UP_CONFIDENCE_BUCKET_METHODS = frozenset(
     {
         "mllogreg56",
@@ -161,6 +205,7 @@ POSITION_SIZED_VALUE_COLUMNS = (
     "roll_net_debit",
 )
 HistoryScoreFn = Callable[[list[float]], float | None]
+HistoryEligibilityFn = Callable[[list[float]], bool]
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -489,6 +534,10 @@ def _derive_symbol_median_roi_topk_rows(
     min_history_trades: int = 1,
     lookback_days: int = 364,
     prediction_caps: dict[str, int] | None = None,
+    selected_method_cap: int | None = None,
+    selected_method_caps: dict[str, int] | None = None,
+    history_eligibility_predicate: HistoryEligibilityFn | None = None,
+    weekly_positive_entry_debit_budget: float | None = None,
 ) -> list[dict[str, object]]:
     return _derive_symbol_scored_topk_rows(
         rows=rows,
@@ -499,6 +548,10 @@ def _derive_symbol_median_roi_topk_rows(
         lookback_days=lookback_days,
         history_scorer=_score_history_by_median_roi,
         prediction_caps=prediction_caps,
+        selected_method_cap=selected_method_cap,
+        selected_method_caps=selected_method_caps,
+        history_eligibility_predicate=history_eligibility_predicate,
+        weekly_positive_entry_debit_budget=weekly_positive_entry_debit_budget,
     )
 
 
@@ -512,6 +565,10 @@ def _derive_symbol_scored_topk_rows(
     min_history_trades: int = 1,
     lookback_days: int = 364,
     prediction_caps: dict[str, int] | None = None,
+    selected_method_cap: int | None = None,
+    selected_method_caps: dict[str, int] | None = None,
+    history_eligibility_predicate: HistoryEligibilityFn | None = None,
+    weekly_positive_entry_debit_budget: float | None = None,
 ) -> list[dict[str, object]]:
     if top_k <= 0:
         return []
@@ -536,6 +593,14 @@ def _derive_symbol_scored_topk_rows(
             history_values = [value for _, value in history]
             if len(history_values) >= min_history_trades:
                 score = history_scorer(history_values)
+            if (
+                history_eligibility_predicate is not None
+                and (
+                    len(history_values) < min_history_trades
+                    or not history_eligibility_predicate(history_values)
+                )
+            ):
+                continue
             ranked_candidates.append((row, score, len(history)))
         ranked_candidates.sort(
             key=lambda item: (
@@ -548,13 +613,37 @@ def _derive_symbol_scored_topk_rows(
         )
         selected_rows: list[dict[str, object]] = []
         selected_count_by_prediction: dict[str, int] = defaultdict(int)
+        selected_count_by_method: dict[str, int] = defaultdict(int)
+        selected_positive_entry_debit = 0.0
         for row, _, _ in ranked_candidates:
             prediction = str(row["prediction"])
             prediction_cap = None if prediction_caps is None else prediction_caps.get(prediction)
             if prediction_cap is not None and selected_count_by_prediction[prediction] >= prediction_cap:
                 continue
+            selected_method = str(row.get("selected_method"))
+            method_specific_cap = None if selected_method_caps is None else selected_method_caps.get(selected_method)
+            if (
+                selected_method_cap is not None
+                and selected_count_by_method[selected_method] >= selected_method_cap
+            ):
+                continue
+            if (
+                method_specific_cap is not None
+                and selected_count_by_method[selected_method] >= method_specific_cap
+            ):
+                continue
+            entry_debit = _to_float(str(row.get("entry_debit")))
+            positive_entry_debit = 0.0 if entry_debit is None or entry_debit <= 0 else entry_debit
+            if (
+                weekly_positive_entry_debit_budget is not None
+                and positive_entry_debit > 0
+                and selected_positive_entry_debit + positive_entry_debit > weekly_positive_entry_debit_budget
+            ):
+                continue
             selected_rows.append(row)
             selected_count_by_prediction[prediction] += 1
+            selected_count_by_method[selected_method] += 1
+            selected_positive_entry_debit += positive_entry_debit
             if len(selected_rows) >= top_k:
                 break
         for row in selected_rows:
@@ -621,6 +710,11 @@ def _score_history_by_median_roi_minus_negative_p25(values: list[float]) -> floa
     return median_roi + min(p25_roi, 0.0)
 
 
+def _has_nonnegative_history_p25(values: list[float]) -> bool:
+    p25_roi = _linear_percentile(values, 0.25)
+    return p25_roi is not None and p25_roi >= 0.0
+
+
 def _is_negative_up_confidence_bucket_method_trade(row: dict[str, object]) -> bool:
     confidence_pct = _to_float(str(row.get("confidence_pct")))
     return (
@@ -678,6 +772,10 @@ def _is_worst_method_trade(row: dict[str, object]) -> bool:
     return str(row.get("selected_method")) in WORST_METHOD_SKIP_METHODS
 
 
+def _is_extended_worst_method_trade(row: dict[str, object]) -> bool:
+    return str(row.get("selected_method")) in EXTENDED_WORST_METHOD_SKIP_METHODS
+
+
 def _select_abstain_method_side_exit_row(
     *,
     prediction: str,
@@ -730,6 +828,36 @@ def _clone_position_sized_trade_row(
     return candidate
 
 
+def _compose_position_sized_trade_row(
+    row: dict[str, object],
+    *,
+    derived_policy_label: str,
+    additional_position_size_weight: float,
+    additional_position_sizing_rule: str,
+) -> dict[str, object]:
+    candidate = dict(row)
+    candidate["policy_label"] = derived_policy_label
+    current_weight = _to_float(None if row.get("position_size_weight") in (None, "") else str(row.get("position_size_weight")))
+    combined_weight = (1.0 if current_weight is None else current_weight) * additional_position_size_weight
+    existing_rule = str(row.get("position_sizing_rule") or "").strip()
+    combined_rule = existing_rule
+    if additional_position_sizing_rule:
+        combined_rule = (
+            f"{existing_rule}|{additional_position_sizing_rule}"
+            if existing_rule
+            else additional_position_sizing_rule
+        )
+    candidate["position_size_weight"] = _round_or_none(combined_weight, digits=4)
+    candidate["position_sizing_rule"] = combined_rule
+    if additional_position_size_weight != 1.0:
+        for field in POSITION_SIZED_VALUE_COLUMNS:
+            candidate[field] = _scale_position_sized_value(
+                candidate.get(field),
+                position_size_weight=additional_position_size_weight,
+            )
+    return candidate
+
+
 def _derive_targeted_best_combined_variant_rows(
     *,
     rows: list[dict[str, object]],
@@ -777,6 +905,76 @@ def _derive_skip_filtered_policy_rows(
     derived_rows: list[dict[str, object]] = []
     for row in source_rows:
         if any(predicate(row) for predicate in skip_trade_predicates):
+            continue
+        candidate = dict(row)
+        candidate["policy_label"] = derived_policy_label
+        derived_rows.append(candidate)
+    return derived_rows
+
+
+def _derive_soft_vix_half_size_policy_rows(
+    *,
+    rows: list[dict[str, object]],
+    source_policy_label: str,
+    derived_policy_label: str,
+    abs_vix_weekly_change_threshold_pct: float,
+    position_size_weight: float = 0.5,
+) -> list[dict[str, object]]:
+    source_rows = [dict(row) for row in rows if str(row["policy_label"]) == source_policy_label]
+    source_rows.sort(key=lambda row: (str(row["entry_date"]), str(row["symbol"]), str(row["prediction"])))
+    derived_rows: list[dict[str, object]] = []
+    for row in source_rows:
+        weekly_change_pct = _to_float(None if row.get("vix_weekly_change_pct") in (None, "") else str(row.get("vix_weekly_change_pct")))
+        if weekly_change_pct is not None and abs(weekly_change_pct) > abs_vix_weekly_change_threshold_pct:
+            derived_rows.append(
+                _compose_position_sized_trade_row(
+                    row,
+                    derived_policy_label=derived_policy_label,
+                    additional_position_size_weight=position_size_weight,
+                    additional_position_sizing_rule=(
+                        f"half_size_vix_abs_weekly_change_gt_{abs_vix_weekly_change_threshold_pct:g}"
+                    ),
+                )
+            )
+            continue
+        candidate = dict(row)
+        candidate["policy_label"] = derived_policy_label
+        derived_rows.append(candidate)
+    return derived_rows
+
+
+def _derive_stress_method_half_size_policy_rows(
+    *,
+    rows: list[dict[str, object]],
+    source_policy_label: str,
+    derived_policy_label: str,
+    stressed_methods: frozenset[str],
+    abs_vix_weekly_change_threshold_pct: float,
+    position_size_weight: float = 0.5,
+) -> list[dict[str, object]]:
+    source_rows = [dict(row) for row in rows if str(row["policy_label"]) == source_policy_label]
+    source_rows.sort(key=lambda row: (str(row["entry_date"]), str(row["symbol"]), str(row["prediction"])))
+    derived_rows: list[dict[str, object]] = []
+    for row in source_rows:
+        weekly_change_pct = _to_float(
+            None if row.get("vix_weekly_change_pct") in (None, "") else str(row.get("vix_weekly_change_pct"))
+        )
+        selected_method = str(row.get("selected_method"))
+        if (
+            weekly_change_pct is not None
+            and abs(weekly_change_pct) > abs_vix_weekly_change_threshold_pct
+            and selected_method in stressed_methods
+        ):
+            derived_rows.append(
+                _compose_position_sized_trade_row(
+                    row,
+                    derived_policy_label=derived_policy_label,
+                    additional_position_size_weight=position_size_weight,
+                    additional_position_sizing_rule=(
+                        f"half_size_stress_methods_vix_abs_weekly_change_gt_{abs_vix_weekly_change_threshold_pct:g}"
+                    ),
+                )
+            )
             continue
         candidate = dict(row)
         candidate["policy_label"] = derived_policy_label
@@ -1324,12 +1522,108 @@ def main() -> int:
         )
     )
     detail_rows.extend(
+        _derive_skip_filtered_policy_rows(
+            rows=detail_rows,
+            source_policy_label=BEST_COMBINED_METHOD_SIDE_EXIT_POLICY_LABEL,
+            derived_policy_label=BEST_COMBINED_EXTENDED_WORST_METHOD_SKIP_POLICY_LABEL,
+            skip_trade_predicates=(_is_extended_worst_method_trade,),
+        )
+    )
+    detail_rows.extend(
         _derive_symbol_median_roi_topk_rows(
             rows=detail_rows,
             source_policy_label=BEST_COMBINED_WORST_METHOD_SKIP_POLICY_LABEL,
             derived_policy_label=BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN3_WORST_METHOD_SKIP_POLICY_LABEL,
             top_k=43,
             min_history_trades=3,
+        )
+    )
+    detail_rows.extend(
+        _derive_symbol_median_roi_topk_rows(
+            rows=detail_rows,
+            source_policy_label=BEST_COMBINED_EXTENDED_WORST_METHOD_SKIP_POLICY_LABEL,
+            derived_policy_label=BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN3_EXTENDED_WORST_METHOD_SKIP_POLICY_LABEL,
+            top_k=43,
+            min_history_trades=3,
+        )
+    )
+    detail_rows.extend(
+        _derive_symbol_median_roi_topk_rows(
+            rows=detail_rows,
+            source_policy_label=BEST_COMBINED_WORST_METHOD_SKIP_POLICY_LABEL,
+            derived_policy_label=BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN3_WORST_METHOD_SKIP_METHOD_CAP12_POLICY_LABEL,
+            top_k=43,
+            min_history_trades=3,
+            selected_method_cap=DEFAULT_TOP43_METHOD_CAP,
+        )
+    )
+    detail_rows.extend(
+        _derive_symbol_median_roi_topk_rows(
+            rows=detail_rows,
+            source_policy_label=BEST_COMBINED_WORST_METHOD_SKIP_POLICY_LABEL,
+            derived_policy_label=BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN3_WORST_METHOD_SKIP_METHOD_CAPS_10_10_2_POLICY_LABEL,
+            top_k=43,
+            min_history_trades=3,
+            selected_method_caps=TIGHT_METHOD_CAPS_10_10_2,
+        )
+    )
+    detail_rows.extend(
+        _derive_symbol_median_roi_topk_rows(
+            rows=detail_rows,
+            source_policy_label=BEST_COMBINED_WORST_METHOD_SKIP_POLICY_LABEL,
+            derived_policy_label=BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN3_WORST_METHOD_SKIP_METHOD_CAPS_9_10_2_POLICY_LABEL,
+            top_k=43,
+            min_history_trades=3,
+            selected_method_caps=TIGHT_METHOD_CAPS_9_10_2,
+        )
+    )
+    detail_rows.extend(
+        _derive_symbol_median_roi_topk_rows(
+            rows=detail_rows,
+            source_policy_label=BEST_COMBINED_WORST_METHOD_SKIP_POLICY_LABEL,
+            derived_policy_label=BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN3_WORST_METHOD_SKIP_METHOD_CAP12_P25_NONNEG_POLICY_LABEL,
+            top_k=43,
+            min_history_trades=3,
+            selected_method_cap=DEFAULT_TOP43_METHOD_CAP,
+            history_eligibility_predicate=_has_nonnegative_history_p25,
+        )
+    )
+    detail_rows.extend(
+        _derive_symbol_median_roi_topk_rows(
+            rows=detail_rows,
+            source_policy_label=BEST_COMBINED_WORST_METHOD_SKIP_POLICY_LABEL,
+            derived_policy_label=BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN5_WORST_METHOD_SKIP_METHOD_CAP12_POLICY_LABEL,
+            top_k=43,
+            min_history_trades=5,
+            selected_method_cap=DEFAULT_TOP43_METHOD_CAP,
+        )
+    )
+    detail_rows.extend(
+        _derive_soft_vix_half_size_policy_rows(
+            rows=detail_rows,
+            source_policy_label=BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN3_WORST_METHOD_SKIP_POLICY_LABEL,
+            derived_policy_label=BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN3_WORST_METHOD_SKIP_VIX_ABS_GT_10_HALF_SIZE_POLICY_LABEL,
+            abs_vix_weekly_change_threshold_pct=DEFAULT_SOFT_VIX_HALF_SIZE_THRESHOLD_PCT,
+        )
+    )
+    detail_rows.extend(
+        _derive_stress_method_half_size_policy_rows(
+            rows=detail_rows,
+            source_policy_label=BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN3_WORST_METHOD_SKIP_METHOD_CAP12_POLICY_LABEL,
+            derived_policy_label=BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN3_WORST_METHOD_SKIP_METHOD_CAP12_STRESS_METHOD_HALF_SIZE_POLICY_LABEL,
+            stressed_methods=STRESS_HALF_SIZE_METHODS,
+            abs_vix_weekly_change_threshold_pct=DEFAULT_STRESS_METHOD_VIX_THRESHOLD_PCT,
+        )
+    )
+    detail_rows.extend(
+        _derive_symbol_median_roi_topk_rows(
+            rows=detail_rows,
+            source_policy_label=BEST_COMBINED_WORST_METHOD_SKIP_POLICY_LABEL,
+            derived_policy_label=BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN3_WORST_METHOD_SKIP_METHOD_CAP12_WEEKLY_DEBIT_BUDGET40_POLICY_LABEL,
+            top_k=43,
+            min_history_trades=3,
+            selected_method_cap=DEFAULT_TOP43_METHOD_CAP,
+            weekly_positive_entry_debit_budget=DEFAULT_WEEKLY_DEBIT_BUDGET,
         )
     )
     detail_rows.extend(

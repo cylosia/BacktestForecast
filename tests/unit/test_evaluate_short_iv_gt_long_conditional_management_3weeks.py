@@ -15,7 +15,7 @@ def test_best_combined_policy_label_points_to_preferred_filtered_variant() -> No
     )
     assert (
         module.BEST_COMBINED_PORTFOLIO_POLICY_LABEL
-        == module.BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN3_WORST_METHOD_SKIP_POLICY_LABEL
+        == module.BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN3_WORST_METHOD_SKIP_METHOD_CAP12_POLICY_LABEL
     )
     assert (
         module.BEST_COMBINED_PORTFOLIO_LIVE_POLICY_LABEL
@@ -82,6 +82,64 @@ def test_method_side_candidate_label_chain_derives_from_promoted_base_policy() -
     assert (
         module.BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN3_WORST_METHOD_SKIP_POLICY_LABEL
         == f"{module.BEST_COMBINED_WORST_METHOD_SKIP_POLICY_LABEL}__top43_52w_symbol_median_roi_min3"
+    )
+    assert (
+        module.BEST_COMBINED_EXTENDED_WORST_METHOD_SKIP_POLICY_LABEL
+        == f"{module.BEST_COMBINED_WORST_METHOD_SKIP_POLICY_LABEL}__skip_mlgb68"
+    )
+    assert (
+        module.BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN3_EXTENDED_WORST_METHOD_SKIP_POLICY_LABEL
+        == f"{module.BEST_COMBINED_EXTENDED_WORST_METHOD_SKIP_POLICY_LABEL}__top43_52w_symbol_median_roi_min3"
+    )
+    assert (
+        module.BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN3_WORST_METHOD_SKIP_METHOD_CAP12_POLICY_LABEL
+        == f"{module.BEST_COMBINED_WORST_METHOD_SKIP_POLICY_LABEL}__top43_52w_symbol_median_roi_min3__method_cap12"
+    )
+    assert (
+        module.BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN3_WORST_METHOD_SKIP_METHOD_CAPS_10_10_2_POLICY_LABEL
+        == (
+            f"{module.BEST_COMBINED_WORST_METHOD_SKIP_POLICY_LABEL}"
+            "__top43_52w_symbol_median_roi_min3__mlgbp72_cap10__mlgb76_cap10__median40rsi_cap2"
+        )
+    )
+    assert (
+        module.BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN3_WORST_METHOD_SKIP_METHOD_CAPS_9_10_2_POLICY_LABEL
+        == (
+            f"{module.BEST_COMBINED_WORST_METHOD_SKIP_POLICY_LABEL}"
+            "__top43_52w_symbol_median_roi_min3__mlgbp72_cap9__mlgb76_cap10__median40rsi_cap2"
+        )
+    )
+    assert (
+        module.BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN3_WORST_METHOD_SKIP_METHOD_CAP12_P25_NONNEG_POLICY_LABEL
+        == (
+            f"{module.BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN3_WORST_METHOD_SKIP_METHOD_CAP12_POLICY_LABEL}"
+            "__p25_nonnegative"
+        )
+    )
+    assert (
+        module.BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN5_WORST_METHOD_SKIP_METHOD_CAP12_POLICY_LABEL
+        == f"{module.BEST_COMBINED_WORST_METHOD_SKIP_POLICY_LABEL}__top43_52w_symbol_median_roi_min5__method_cap12"
+    )
+    assert (
+        module.BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN3_WORST_METHOD_SKIP_VIX_ABS_GT_10_HALF_SIZE_POLICY_LABEL
+        == (
+            f"{module.BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN3_WORST_METHOD_SKIP_POLICY_LABEL}"
+            "__vix_abs_weekly_change_gt_10_half_size"
+        )
+    )
+    assert (
+        module.BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN3_WORST_METHOD_SKIP_METHOD_CAP12_STRESS_METHOD_HALF_SIZE_POLICY_LABEL
+        == (
+            f"{module.BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN3_WORST_METHOD_SKIP_METHOD_CAP12_POLICY_LABEL}"
+            "__stress_median40rsi_mllogreg56_half_size"
+        )
+    )
+    assert (
+        module.BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN3_WORST_METHOD_SKIP_METHOD_CAP12_WEEKLY_DEBIT_BUDGET40_POLICY_LABEL
+        == (
+            f"{module.BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN3_WORST_METHOD_SKIP_METHOD_CAP12_POLICY_LABEL}"
+            "__weekly_debit_budget_40"
+        )
     )
     assert (
         module.BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN3_ABSTAIN_CAP29_POLICY_LABEL
@@ -338,6 +396,121 @@ def test_derive_symbol_median_roi_topk_rows_honors_prediction_caps() -> None:
     ]
 
 
+def test_derive_symbol_median_roi_topk_rows_honors_selected_method_cap() -> None:
+    rows = [
+        {"entry_date": "2025-01-03", "symbol": "AAA", "prediction": "abstain", "selected_method": "m1", "policy_label": "base", "entry_debit": 2.0, "pnl": 0.8, "roi_pct": 40.0},
+        {"entry_date": "2025-01-03", "symbol": "BBB", "prediction": "abstain", "selected_method": "m1", "policy_label": "base", "entry_debit": 2.0, "pnl": 0.6, "roi_pct": 30.0},
+        {"entry_date": "2025-01-03", "symbol": "CCC", "prediction": "up", "selected_method": "m2", "policy_label": "base", "entry_debit": 2.0, "pnl": 0.5, "roi_pct": 25.0},
+        {"entry_date": "2025-01-03", "symbol": "DDD", "prediction": "up", "selected_method": "m3", "policy_label": "base", "entry_debit": 2.0, "pnl": 0.4, "roi_pct": 20.0},
+        {"entry_date": "2025-01-10", "symbol": "AAA", "prediction": "abstain", "selected_method": "m1", "policy_label": "base", "entry_debit": 2.0, "pnl": 0.1, "roi_pct": 5.0},
+        {"entry_date": "2025-01-10", "symbol": "BBB", "prediction": "abstain", "selected_method": "m1", "policy_label": "base", "entry_debit": 2.0, "pnl": 0.1, "roi_pct": 5.0},
+        {"entry_date": "2025-01-10", "symbol": "CCC", "prediction": "up", "selected_method": "m2", "policy_label": "base", "entry_debit": 2.0, "pnl": 0.1, "roi_pct": 5.0},
+        {"entry_date": "2025-01-10", "symbol": "DDD", "prediction": "up", "selected_method": "m3", "policy_label": "base", "entry_debit": 2.0, "pnl": 0.1, "roi_pct": 5.0},
+    ]
+
+    filtered = module._derive_symbol_median_roi_topk_rows(
+        rows=rows,
+        source_policy_label="base",
+        derived_policy_label="filtered",
+        top_k=3,
+        min_history_trades=1,
+        selected_method_cap=1,
+    )
+
+    assert [(row["entry_date"], row["symbol"], row["selected_method"]) for row in filtered] == [
+        ("2025-01-03", "AAA", "m1"),
+        ("2025-01-03", "CCC", "m2"),
+        ("2025-01-03", "DDD", "m3"),
+        ("2025-01-10", "AAA", "m1"),
+        ("2025-01-10", "CCC", "m2"),
+        ("2025-01-10", "DDD", "m3"),
+    ]
+
+
+def test_derive_symbol_median_roi_topk_rows_honors_method_specific_caps() -> None:
+    rows = [
+        {"entry_date": "2025-01-03", "symbol": "AAA", "prediction": "abstain", "selected_method": "m1", "policy_label": "base", "entry_debit": 2.0, "pnl": 0.8, "roi_pct": 40.0},
+        {"entry_date": "2025-01-03", "symbol": "BBB", "prediction": "abstain", "selected_method": "m1", "policy_label": "base", "entry_debit": 2.0, "pnl": 0.6, "roi_pct": 30.0},
+        {"entry_date": "2025-01-03", "symbol": "CCC", "prediction": "up", "selected_method": "m2", "policy_label": "base", "entry_debit": 2.0, "pnl": 0.5, "roi_pct": 25.0},
+        {"entry_date": "2025-01-03", "symbol": "DDD", "prediction": "up", "selected_method": "m3", "policy_label": "base", "entry_debit": 2.0, "pnl": 0.4, "roi_pct": 20.0},
+        {"entry_date": "2025-01-10", "symbol": "AAA", "prediction": "abstain", "selected_method": "m1", "policy_label": "base", "entry_debit": 2.0, "pnl": 0.1, "roi_pct": 5.0},
+        {"entry_date": "2025-01-10", "symbol": "BBB", "prediction": "abstain", "selected_method": "m1", "policy_label": "base", "entry_debit": 2.0, "pnl": 0.1, "roi_pct": 5.0},
+        {"entry_date": "2025-01-10", "symbol": "CCC", "prediction": "up", "selected_method": "m2", "policy_label": "base", "entry_debit": 2.0, "pnl": 0.1, "roi_pct": 5.0},
+        {"entry_date": "2025-01-10", "symbol": "DDD", "prediction": "up", "selected_method": "m3", "policy_label": "base", "entry_debit": 2.0, "pnl": 0.1, "roi_pct": 5.0},
+    ]
+
+    filtered = module._derive_symbol_median_roi_topk_rows(
+        rows=rows,
+        source_policy_label="base",
+        derived_policy_label="filtered",
+        top_k=3,
+        min_history_trades=1,
+        selected_method_caps={"m1": 1, "m2": 1},
+    )
+
+    assert [(row["entry_date"], row["symbol"], row["selected_method"]) for row in filtered] == [
+        ("2025-01-03", "AAA", "m1"),
+        ("2025-01-03", "CCC", "m2"),
+        ("2025-01-03", "DDD", "m3"),
+        ("2025-01-10", "AAA", "m1"),
+        ("2025-01-10", "CCC", "m2"),
+        ("2025-01-10", "DDD", "m3"),
+    ]
+
+
+def test_derive_symbol_median_roi_topk_rows_honors_history_eligibility_predicate() -> None:
+    rows = [
+        {"entry_date": "2025-01-03", "symbol": "AAA", "prediction": "abstain", "selected_method": "m1", "policy_label": "base", "entry_debit": 2.0, "pnl": -0.8, "roi_pct": -40.0},
+        {"entry_date": "2025-01-03", "symbol": "BBB", "prediction": "abstain", "selected_method": "m2", "policy_label": "base", "entry_debit": 2.0, "pnl": 0.6, "roi_pct": 30.0},
+        {"entry_date": "2025-01-10", "symbol": "AAA", "prediction": "abstain", "selected_method": "m1", "policy_label": "base", "entry_debit": 2.0, "pnl": -0.2, "roi_pct": -10.0},
+        {"entry_date": "2025-01-10", "symbol": "BBB", "prediction": "abstain", "selected_method": "m2", "policy_label": "base", "entry_debit": 2.0, "pnl": 0.1, "roi_pct": 5.0},
+        {"entry_date": "2025-01-17", "symbol": "AAA", "prediction": "abstain", "selected_method": "m1", "policy_label": "base", "entry_debit": 2.0, "pnl": 0.1, "roi_pct": 5.0},
+        {"entry_date": "2025-01-17", "symbol": "BBB", "prediction": "abstain", "selected_method": "m2", "policy_label": "base", "entry_debit": 2.0, "pnl": 0.1, "roi_pct": 5.0},
+        {"entry_date": "2025-01-24", "symbol": "AAA", "prediction": "abstain", "selected_method": "m1", "policy_label": "base", "entry_debit": 2.0, "pnl": 0.1, "roi_pct": 5.0},
+        {"entry_date": "2025-01-24", "symbol": "BBB", "prediction": "abstain", "selected_method": "m2", "policy_label": "base", "entry_debit": 2.0, "pnl": 0.1, "roi_pct": 5.0},
+    ]
+
+    filtered = module._derive_symbol_median_roi_topk_rows(
+        rows=rows,
+        source_policy_label="base",
+        derived_policy_label="filtered",
+        top_k=1,
+        min_history_trades=3,
+        history_eligibility_predicate=module._has_nonnegative_history_p25,
+    )
+
+    assert [(row["entry_date"], row["symbol"]) for row in filtered] == [
+        ("2025-01-24", "BBB"),
+    ]
+
+
+def test_derive_symbol_median_roi_topk_rows_honors_weekly_positive_entry_debit_budget() -> None:
+    rows = [
+        {"entry_date": "2025-01-03", "symbol": "AAA", "prediction": "abstain", "selected_method": "m1", "policy_label": "base", "entry_debit": 2.0, "pnl": 0.2, "roi_pct": 10.0},
+        {"entry_date": "2025-01-03", "symbol": "BBB", "prediction": "abstain", "selected_method": "m2", "policy_label": "base", "entry_debit": 2.0, "pnl": 0.4, "roi_pct": 20.0},
+        {"entry_date": "2025-01-03", "symbol": "CCC", "prediction": "abstain", "selected_method": "m3", "policy_label": "base", "entry_debit": 1.2, "pnl": 0.6, "roi_pct": 30.0},
+        {"entry_date": "2025-01-10", "symbol": "AAA", "prediction": "abstain", "selected_method": "m1", "policy_label": "base", "entry_debit": 2.0, "pnl": 0.1, "roi_pct": 5.0},
+        {"entry_date": "2025-01-10", "symbol": "BBB", "prediction": "abstain", "selected_method": "m2", "policy_label": "base", "entry_debit": 2.0, "pnl": 0.1, "roi_pct": 5.0},
+        {"entry_date": "2025-01-10", "symbol": "CCC", "prediction": "abstain", "selected_method": "m3", "policy_label": "base", "entry_debit": 1.2, "pnl": 0.1, "roi_pct": 5.0},
+    ]
+
+    filtered = module._derive_symbol_median_roi_topk_rows(
+        rows=rows,
+        source_policy_label="base",
+        derived_policy_label="filtered",
+        top_k=3,
+        min_history_trades=1,
+        weekly_positive_entry_debit_budget=3.5,
+    )
+
+    assert [(row["entry_date"], row["symbol"]) for row in filtered] == [
+        ("2025-01-03", "AAA"),
+        ("2025-01-03", "CCC"),
+        ("2025-01-10", "CCC"),
+        ("2025-01-10", "BBB"),
+    ]
+
+
 def test_score_history_by_median_roi_minus_negative_p25_penalizes_negative_tail() -> None:
     assert module._score_history_by_median_roi_minus_negative_p25([10.0, 20.0, 30.0, 40.0]) == 25.0
     assert module._score_history_by_median_roi_minus_negative_p25([-40.0, -40.0, 80.0, 80.0]) == -20.0
@@ -347,6 +520,13 @@ def test_is_worst_method_trade_targets_vote40rsi_and_mlgbp68_only() -> None:
     assert module._is_worst_method_trade({"selected_method": "vote40rsi"}) is True
     assert module._is_worst_method_trade({"selected_method": "mlgbp68"}) is True
     assert module._is_worst_method_trade({"selected_method": "mlgb72"}) is False
+
+
+def test_is_extended_worst_method_trade_also_targets_mlgb68() -> None:
+    assert module._is_extended_worst_method_trade({"selected_method": "vote40rsi"}) is True
+    assert module._is_extended_worst_method_trade({"selected_method": "mlgbp68"}) is True
+    assert module._is_extended_worst_method_trade({"selected_method": "mlgb68"}) is True
+    assert module._is_extended_worst_method_trade({"selected_method": "mlgb72"}) is False
 
 
 def test_derive_targeted_best_combined_variant_rows_skips_only_bad_up_bucket_methods() -> None:
@@ -494,6 +674,119 @@ def test_derive_skip_filtered_policy_rows_preserves_existing_position_size_metad
     assert remaining["position_sizing_rule"] == "half_size_abstain_entry_debit_gt_4"
     assert remaining["entry_debit"] == 2.5
     assert remaining["pnl"] == -1.0
+
+
+def test_derive_soft_vix_half_size_policy_rows_compounds_existing_position_size() -> None:
+    rows = [
+        {
+            "entry_date": "2025-01-10",
+            "symbol": "AAA",
+            "prediction": "abstain",
+            "policy_label": "base",
+            "entry_debit": 2.5,
+            "original_entry_debit": 3.0,
+            "spread_mark": 0.75,
+            "pnl": -1.0,
+            "roll_net_debit": 0.2,
+            "roi_pct": -40.0,
+            "vix_weekly_change_pct": 12.0,
+            "position_size_weight": 0.5,
+            "position_sizing_rule": "half_size_abstain_entry_debit_gt_4",
+        },
+        {
+            "entry_date": "2025-01-17",
+            "symbol": "BBB",
+            "prediction": "abstain",
+            "policy_label": "base",
+            "entry_debit": 1.0,
+            "original_entry_debit": 1.0,
+            "spread_mark": 0.25,
+            "pnl": 0.2,
+            "roll_net_debit": 0.0,
+            "roi_pct": 20.0,
+            "vix_weekly_change_pct": 8.0,
+            "position_size_weight": 1.0,
+            "position_sizing_rule": "",
+        },
+    ]
+
+    filtered = module._derive_soft_vix_half_size_policy_rows(
+        rows=rows,
+        source_policy_label="base",
+        derived_policy_label="derived",
+        abs_vix_weekly_change_threshold_pct=10.0,
+    )
+
+    assert len(filtered) == 2
+    half_sized = filtered[0]
+    assert half_sized["policy_label"] == "derived"
+    assert half_sized["position_size_weight"] == 0.25
+    assert half_sized["position_sizing_rule"] == "half_size_abstain_entry_debit_gt_4|half_size_vix_abs_weekly_change_gt_10"
+    assert half_sized["entry_debit"] == 1.25
+    assert half_sized["original_entry_debit"] == 1.5
+    assert half_sized["spread_mark"] == 0.375
+    assert half_sized["pnl"] == -0.5
+    assert half_sized["roll_net_debit"] == 0.1
+    unchanged = filtered[1]
+    assert unchanged["position_size_weight"] == 1.0
+    assert unchanged["position_sizing_rule"] == ""
+    assert unchanged["entry_debit"] == 1.0
+
+
+def test_derive_stress_method_half_size_policy_rows_only_half_sizes_targeted_methods() -> None:
+    rows = [
+        {
+            "entry_date": "2025-01-10",
+            "symbol": "AAA",
+            "prediction": "abstain",
+            "policy_label": "base",
+            "entry_debit": 2.5,
+            "original_entry_debit": 2.5,
+            "spread_mark": 0.75,
+            "pnl": -1.0,
+            "roll_net_debit": 0.2,
+            "roi_pct": -40.0,
+            "vix_weekly_change_pct": 12.0,
+            "position_size_weight": 1.0,
+            "position_sizing_rule": "",
+            "selected_method": "median40rsi",
+        },
+        {
+            "entry_date": "2025-01-10",
+            "symbol": "BBB",
+            "prediction": "up",
+            "policy_label": "base",
+            "entry_debit": 1.5,
+            "original_entry_debit": 1.5,
+            "spread_mark": 0.4,
+            "pnl": 0.3,
+            "roll_net_debit": 0.0,
+            "roi_pct": 20.0,
+            "vix_weekly_change_pct": 12.0,
+            "position_size_weight": 1.0,
+            "position_sizing_rule": "",
+            "selected_method": "median25trend",
+        },
+    ]
+
+    filtered = module._derive_stress_method_half_size_policy_rows(
+        rows=rows,
+        source_policy_label="base",
+        derived_policy_label="derived",
+        stressed_methods=module.STRESS_HALF_SIZE_METHODS,
+        abs_vix_weekly_change_threshold_pct=10.0,
+    )
+
+    assert len(filtered) == 2
+    half_sized = filtered[0]
+    assert half_sized["position_size_weight"] == 0.5
+    assert half_sized["position_sizing_rule"] == "half_size_stress_methods_vix_abs_weekly_change_gt_10"
+    assert half_sized["entry_debit"] == 1.25
+    assert half_sized["pnl"] == -0.5
+    unchanged = filtered[1]
+    assert unchanged["position_size_weight"] == 1.0
+    assert unchanged["position_sizing_rule"] == ""
+    assert unchanged["entry_debit"] == 1.5
 
 
 def test_is_debit_sensitive_up_method_trade_uses_method_specific_thresholds() -> None:
