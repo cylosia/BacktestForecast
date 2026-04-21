@@ -52,3 +52,29 @@ def test_build_display_row_uses_upside_tp_sl_for_up_predictions() -> None:
 
     assert table_script._build_display_row(row)["TP"] == "75"
     assert table_script._build_display_row(row)["SL"] == "65"
+
+
+def test_default_input_csv_accepts_top43_files(monkeypatch) -> None:
+    class _FakeStat:
+        def __init__(self, mtime: float) -> None:
+            self.st_mtime = mtime
+
+    class _FakePath:
+        def __init__(self, name: str, mtime: float) -> None:
+            self.name = name
+            self._mtime = mtime
+
+        def stat(self) -> _FakeStat:
+            return _FakeStat(self._mtime)
+
+    older = _FakePath("short_iv_gt_long_live_top40_2026-04-17.csv", 100.0)
+    newer = _FakePath("short_iv_gt_long_live_top43_2026-04-17.csv", 200.0)
+
+    class _FakeLogs:
+        def glob(self, pattern: str) -> list[_FakePath]:
+            assert pattern == "short_iv_gt_long_live_top*.csv"
+            return [older, newer]
+
+    monkeypatch.setattr(table_script, "LOGS", _FakeLogs())
+
+    assert table_script._default_input_csv() is newer

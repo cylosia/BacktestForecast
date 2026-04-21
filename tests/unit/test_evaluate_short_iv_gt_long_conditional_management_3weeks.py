@@ -13,6 +13,14 @@ def test_best_combined_policy_label_points_to_preferred_filtered_variant() -> No
         module.BEST_COMBINED_POLICY_LABEL
         == module.BEST_COMBINED_METHOD_SIDE_EXIT_POLICY_LABEL
     )
+    assert (
+        module.BEST_COMBINED_PORTFOLIO_POLICY_LABEL
+        == module.BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN3_WORST_METHOD_SKIP_POLICY_LABEL
+    )
+    assert (
+        module.BEST_COMBINED_PORTFOLIO_LIVE_POLICY_LABEL
+        == f"{module.BEST_COMBINED_PORTFOLIO_POLICY_LABEL}_live"
+    )
 
 
 def test_best_combined_label_chain_derives_from_promoted_base_policy() -> None:
@@ -54,6 +62,34 @@ def test_method_side_candidate_label_chain_derives_from_promoted_base_policy() -
     assert (
         module.BEST_COMBINED_TOP18_SYMBOL_MEDIAN_ROI_MIN3_POLICY_LABEL
         == f"{module.BEST_COMBINED_METHOD_SIDE_EXIT_POLICY_LABEL}__top18_52w_symbol_median_roi_min3"
+    )
+    assert (
+        module.BEST_COMBINED_TOP40_SYMBOL_MEDIAN_ROI_MIN3_POLICY_LABEL
+        == f"{module.BEST_COMBINED_METHOD_SIDE_EXIT_POLICY_LABEL}__top40_52w_symbol_median_roi_min3"
+    )
+    assert (
+        module.BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN1_POLICY_LABEL
+        == f"{module.BEST_COMBINED_METHOD_SIDE_EXIT_POLICY_LABEL}__top43_52w_symbol_median_roi_min1"
+    )
+    assert (
+        module.BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN3_POLICY_LABEL
+        == f"{module.BEST_COMBINED_METHOD_SIDE_EXIT_POLICY_LABEL}__top43_52w_symbol_median_roi_min3"
+    )
+    assert (
+        module.BEST_COMBINED_WORST_METHOD_SKIP_POLICY_LABEL
+        == f"{module.BEST_COMBINED_METHOD_SIDE_EXIT_POLICY_LABEL}__skip_vote40rsi_mlgbp68"
+    )
+    assert (
+        module.BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN3_WORST_METHOD_SKIP_POLICY_LABEL
+        == f"{module.BEST_COMBINED_WORST_METHOD_SKIP_POLICY_LABEL}__top43_52w_symbol_median_roi_min3"
+    )
+    assert (
+        module.BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN3_ABSTAIN_CAP29_POLICY_LABEL
+        == f"{module.BEST_COMBINED_METHOD_SIDE_EXIT_POLICY_LABEL}__top43_52w_symbol_median_roi_min3__abstain_cap29"
+    )
+    assert (
+        module.BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MINUS_NEGATIVE_P25_MIN3_POLICY_LABEL
+        == f"{module.BEST_COMBINED_METHOD_SIDE_EXIT_POLICY_LABEL}__top43_52w_symbol_median_roi_minus_negative_p25_min3"
     )
 
 
@@ -177,6 +213,15 @@ def test_resolve_method_side_tp_stop_uses_prediction_and_method_overrides() -> N
     assert module.resolve_method_side_tp_stop(prediction="up", selected_method="mlgbp64") == (75.0, 65.0)
 
 
+def test_is_vix_weekly_change_within_threshold_uses_absolute_change() -> None:
+    assert module._is_vix_weekly_change_within_threshold(weekly_change_pct=20.0, threshold_pct=20.0) is True
+    assert module._is_vix_weekly_change_within_threshold(weekly_change_pct=-20.0, threshold_pct=20.0) is True
+    assert module._is_vix_weekly_change_within_threshold(weekly_change_pct=20.1, threshold_pct=20.0) is False
+    assert module._is_vix_weekly_change_within_threshold(weekly_change_pct=-20.1, threshold_pct=20.0) is False
+    assert module._is_vix_weekly_change_within_threshold(weekly_change_pct=None, threshold_pct=20.0) is None
+    assert module._is_vix_weekly_change_within_threshold(weekly_change_pct=5.0, threshold_pct=None) is None
+
+
 def test_derive_symbol_side_lookback_filtered_rows_uses_side_specific_base_history() -> None:
     rows = [
         {"entry_date": "2025-01-03", "symbol": "ABC", "prediction": "abstain", "policy_label": "base", "entry_debit": 2.0, "pnl": -1.0},
@@ -260,6 +305,48 @@ def test_derive_symbol_median_roi_topk_rows_ranks_weekly_candidates_from_full_so
         ("2025-01-10", "BBB"),
     ]
     assert all(row["policy_label"] == "filtered" for row in filtered)
+
+
+def test_derive_symbol_median_roi_topk_rows_honors_prediction_caps() -> None:
+    rows = [
+        {"entry_date": "2025-01-03", "symbol": "AAA", "prediction": "abstain", "policy_label": "base", "entry_debit": 2.0, "pnl": 0.8, "roi_pct": 40.0},
+        {"entry_date": "2025-01-03", "symbol": "BBB", "prediction": "abstain", "policy_label": "base", "entry_debit": 2.0, "pnl": 0.6, "roi_pct": 30.0},
+        {"entry_date": "2025-01-03", "symbol": "CCC", "prediction": "up", "policy_label": "base", "entry_debit": 2.0, "pnl": 0.5, "roi_pct": 25.0},
+        {"entry_date": "2025-01-03", "symbol": "DDD", "prediction": "up", "policy_label": "base", "entry_debit": 2.0, "pnl": 0.4, "roi_pct": 20.0},
+        {"entry_date": "2025-01-10", "symbol": "AAA", "prediction": "abstain", "policy_label": "base", "entry_debit": 2.0, "pnl": 0.1, "roi_pct": 5.0},
+        {"entry_date": "2025-01-10", "symbol": "BBB", "prediction": "abstain", "policy_label": "base", "entry_debit": 2.0, "pnl": 0.1, "roi_pct": 5.0},
+        {"entry_date": "2025-01-10", "symbol": "CCC", "prediction": "up", "policy_label": "base", "entry_debit": 2.0, "pnl": 0.1, "roi_pct": 5.0},
+        {"entry_date": "2025-01-10", "symbol": "DDD", "prediction": "up", "policy_label": "base", "entry_debit": 2.0, "pnl": 0.1, "roi_pct": 5.0},
+    ]
+
+    filtered = module._derive_symbol_median_roi_topk_rows(
+        rows=rows,
+        source_policy_label="base",
+        derived_policy_label="filtered",
+        top_k=3,
+        min_history_trades=1,
+        prediction_caps={"abstain": 1},
+    )
+
+    assert [(row["entry_date"], row["symbol"], row["prediction"]) for row in filtered] == [
+        ("2025-01-03", "AAA", "abstain"),
+        ("2025-01-03", "CCC", "up"),
+        ("2025-01-03", "DDD", "up"),
+        ("2025-01-10", "AAA", "abstain"),
+        ("2025-01-10", "CCC", "up"),
+        ("2025-01-10", "DDD", "up"),
+    ]
+
+
+def test_score_history_by_median_roi_minus_negative_p25_penalizes_negative_tail() -> None:
+    assert module._score_history_by_median_roi_minus_negative_p25([10.0, 20.0, 30.0, 40.0]) == 25.0
+    assert module._score_history_by_median_roi_minus_negative_p25([-40.0, -40.0, 80.0, 80.0]) == -20.0
+
+
+def test_is_worst_method_trade_targets_vote40rsi_and_mlgbp68_only() -> None:
+    assert module._is_worst_method_trade({"selected_method": "vote40rsi"}) is True
+    assert module._is_worst_method_trade({"selected_method": "mlgbp68"}) is True
+    assert module._is_worst_method_trade({"selected_method": "mlgb72"}) is False
 
 
 def test_derive_targeted_best_combined_variant_rows_skips_only_bad_up_bucket_methods() -> None:

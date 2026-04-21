@@ -19,7 +19,7 @@ DISPLAY_FIELDS = ("symbol", "delta", "option_spread", "entry_debit", "TP", "SL")
 
 def _default_input_csv() -> Path | None:
     candidates = sorted(
-        LOGS.glob("short_iv_gt_long_live_top40_*.csv"),
+        LOGS.glob("short_iv_gt_long_live_top*.csv"),
         key=lambda path: (path.stat().st_mtime, path.name),
         reverse=True,
     )
@@ -37,7 +37,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--input-csv",
         type=Path,
         default=_default_input_csv(),
-        help="Live selection CSV to format. Defaults to the newest short_iv_gt_long_live_top40_*.csv in logs/.",
+        help="Live selection CSV to format. Defaults to the newest short_iv_gt_long_live_top*.csv in logs/.",
     )
     parser.add_argument(
         "--output-csv",
@@ -116,7 +116,7 @@ def _format_table(rows: list[dict[str, str]]) -> str:
 def main() -> int:
     args = build_parser().parse_args()
     if args.input_csv is None:
-        raise SystemExit("No default live top40 CSV was found. Provide --input-csv.")
+        raise SystemExit("No default live top selection CSV was found. Provide --input-csv.")
     if not args.input_csv.exists():
         raise SystemExit(f"Input CSV not found: {args.input_csv}")
 
