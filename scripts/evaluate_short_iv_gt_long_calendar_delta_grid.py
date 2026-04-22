@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import os
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import date, timedelta
@@ -38,6 +40,8 @@ DEFAULT_ENTRY_START_DATE = date.fromisoformat("2024-04-19")
 DEFAULT_ENTRY_END_DATE = date.fromisoformat("2026-04-10")
 DEFAULT_SHORT_DTE_MAX = 10
 DEFAULT_GAP_DTE_MAX = 10
+DEFAULT_MAX_WORKERS = 4
+SYMBOL_RESULT_CACHE_SCHEMA_VERSION = 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -59,6 +63,14 @@ class WeeklyCalendarCandidate:
     common_atm_strike: float
     short_atm_iv_pct: float
     long_atm_iv_pct: float
+
+
+@dataclass(frozen=True, slots=True)
+class SymbolEvaluationResult:
+    symbol: str
+    weekly_candidate_rows: list[dict[str, object]]
+    detail_rows: list[dict[str, object]]
+    status_message: str
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -107,6 +119,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="Statement timeout passed to build_engine. Defaults to 120000.",
     )
     parser.add_argument("--limit-symbols", type=int, default=None, help="Optional cap on number of symbols.")
+    parser.add_argument(
+        "--max-workers",
+        type=int,
+        default=DEFAULT_MAX_WORKERS,
+        help="How many symbols to evaluate concurrently. Defaults to 4.",
+    )
+    parser.add_argument(
+        "--symbol-cache-dir",
+        type=Path,
+        default=None,
+        help="Optional directory for per-symbol resume cache. Defaults to <output-prefix>_symbol_cache.",
+    )
+    parser.add_argument(
+        "--disable-symbol-cache",
+        action="store_true",
+        help="Disable per-symbol resume cache reads/writes.",
+    )
     return parser
 
 
@@ -383,6 +412,12 @@ def _build_prediction_map_for_dates(
     ml_estimator: pwm.FittedMlModel | None = None
     ml_last_fit_index: int | None = None
     ml_train_sample_count: int | None = None
+    analog_method_cache = pwm.AnalogMethodCache() if method.engine != "ml" else None
+    ml_fit_cache: dict[tuple[tuple[str, str, int, int, float, int], int], tuple[pwm.FittedMlModel, int] | None] | None = (
+        {}
+        if method.engine == "ml"
+        else None
+    )
     for index in range(last_prediction_index + 1):
         if index < last_scored_index:
             max_candidate_index = index - horizon_bars
@@ -410,12 +445,13 @@ def _build_prediction_map_for_dates(
                 or ml_last_fit_index is None
                 or (train_end_index - ml_last_fit_index) >= method.retrain_every_bars
             ):
-                fitted = pwm._fit_ml_model(
+                fitted = pwm._fit_ml_model_cached(
                     bars=bars,
                     features=features,
                     horizon_bars=horizon_bars,
                     train_end_index=train_end_index,
                     method=method,
+                    fit_cache=ml_fit_cache,
                 )
                 if fitted is None:
                     results[bar.trade_date] = None
@@ -434,14 +470,43 @@ def _build_prediction_map_for_dates(
             )
             results[bar.trade_date] = _prediction_payload_from_snapshot(snapshot, prediction_engine=method.engine)
         else:
-            snapshot = pwm._predict_with_method(
-                trade_date=bar.trade_date,
-                current_features=current_features,
-                candidate_pool=candidate_pool,
-                min_spacing_bars=min_spacing_bars,
-                min_candidate_count=min_candidate_count,
-                method=method,
-            )
+            if analog_method_cache is None:
+                snapshot = pwm._predict_with_method(
+                    trade_date=bar.trade_date,
+                    current_features=current_features,
+                    candidate_pool=candidate_pool,
+                    min_spacing_bars=min_spacing_bars,
+                    min_candidate_count=min_candidate_count,
+                    method=method,
+                )
+            else:
+                ranked_candidates = pwm._get_ranked_candidates_for_method(
+                    index=index,
+                    current_features=current_features,
+                    candidates=candidates,
+                    horizon_bars=horizon_bars,
+                    min_candidate_count=min_candidate_count,
+                    method=method,
+                    cache=analog_method_cache,
+                )
+                selected = pwm._get_selected_analogs_for_method(
+                    index=index,
+                    current_features=current_features,
+                    candidates=candidates,
+                    horizon_bars=horizon_bars,
+                    min_candidate_count=min_candidate_count,
+                    min_spacing_bars=min_spacing_bars,
+                    method=method,
+                    cache=analog_method_cache,
+                )
+                snapshot = pwm._build_analog_prediction_snapshot(
+                    trade_date=bar.trade_date,
+                    current_features=current_features,
+                    ranked_candidates=ranked_candidates,
+                    selected=selected,
+                    min_candidate_count=min_candidate_count,
+                    method=method,
+                )
             results[bar.trade_date] = _prediction_payload_from_snapshot(snapshot, prediction_engine=method.engine)
         if len(results) == len(requested_dates):
             break
@@ -502,10 +567,350 @@ def _round_or_none(value: float | None, digits: int = 6) -> float | None:
     return None if value is None else round(value, digits)
 
 
+def _default_symbol_cache_dir(output_prefix: Path) -> Path:
+    return output_prefix.with_name(f"{output_prefix.name}_symbol_cache")
+
+
+def _symbol_cache_path(cache_dir: Path, symbol: str) -> Path:
+    return cache_dir / f"{symbol.lower()}.json"
+
+
+def _symbol_cache_metadata(
+    *,
+    symbol: str,
+    method_name: str,
+    entry_start_date: date,
+    entry_end_date: date,
+    explicit_entry_dates: set[date],
+    short_dte_max: int,
+    gap_dte_max: int,
+    delta_targets: tuple[int, ...],
+) -> dict[str, object]:
+    return {
+        "schema_version": SYMBOL_RESULT_CACHE_SCHEMA_VERSION,
+        "symbol": symbol,
+        "method_name": method_name,
+        "entry_start_date": entry_start_date.isoformat(),
+        "entry_end_date": entry_end_date.isoformat(),
+        "explicit_entry_dates": [value.isoformat() for value in sorted(explicit_entry_dates)],
+        "short_dte_max": short_dte_max,
+        "gap_dte_max": gap_dte_max,
+        "delta_targets": list(delta_targets),
+    }
+
+
+def _load_cached_symbol_result(
+    *,
+    cache_dir: Path | None,
+    metadata: dict[str, object],
+) -> SymbolEvaluationResult | None:
+    if cache_dir is None:
+        return None
+    cache_path = _symbol_cache_path(cache_dir, str(metadata["symbol"]))
+    if not cache_path.exists():
+        return None
+    try:
+        payload = json.loads(cache_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if payload.get("metadata") != metadata:
+        return None
+    return SymbolEvaluationResult(
+        symbol=str(payload["symbol"]),
+        weekly_candidate_rows=list(payload.get("weekly_candidate_rows", [])),
+        detail_rows=list(payload.get("detail_rows", [])),
+        status_message=f"{payload['symbol']}: reused symbol cache",
+    )
+
+
+def _store_cached_symbol_result(
+    *,
+    cache_dir: Path | None,
+    metadata: dict[str, object],
+    result: SymbolEvaluationResult,
+) -> None:
+    if cache_dir is None:
+        return
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    cache_path = _symbol_cache_path(cache_dir, result.symbol)
+    payload = {
+        "symbol": result.symbol,
+        "metadata": metadata,
+        "weekly_candidate_rows": result.weekly_candidate_rows,
+        "detail_rows": result.detail_rows,
+    }
+    cache_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+
+
+def _evaluate_symbol(
+    *,
+    symbol: str,
+    method_name: str,
+    factory: sessionmaker,
+    benchmark_context_by_date: dict[date, tuple[float, float]],
+    entry_start_date: date,
+    entry_end_date: date,
+    explicit_entry_dates: set[date],
+    short_dte_max: int,
+    gap_dte_max: int,
+    delta_targets: tuple[int, ...],
+) -> SymbolEvaluationResult | None:
+    with factory() as session:
+        bars = pwm._load_bars(
+            session,
+            symbol=symbol,
+            start_date=entry_start_date,
+            end_date=entry_end_date + timedelta(days=21),
+            warmup_calendar_days=pwm.DEFAULT_WARMUP_CALENDAR_DAYS,
+        )
+        if not bars:
+            return SymbolEvaluationResult(
+                symbol=symbol,
+                weekly_candidate_rows=[],
+                detail_rows=[],
+                status_message=f"{symbol}: skipped, no underlying bars",
+            )
+        spot_by_date = {
+            bar.trade_date: float(bar.close_price)
+            for bar in bars
+        }
+        friday_dates = [
+            bar.trade_date
+            for bar in bars
+            if (
+                (
+                    explicit_entry_dates
+                    and bar.trade_date in explicit_entry_dates
+                )
+                or (
+                    not explicit_entry_dates
+                    and entry_start_date <= bar.trade_date <= entry_end_date
+                    and bar.trade_date.weekday() == 4
+                )
+            )
+        ]
+        entry_option_rows_by_date = _load_option_rows_for_dates(
+            session,
+            symbol=symbol,
+            trade_dates=set(friday_dates),
+        )
+        weekly_candidates = _select_weekly_calendar_candidates(
+            symbol=symbol,
+            friday_dates=friday_dates,
+            spot_by_date=spot_by_date,
+            option_rows_by_date=entry_option_rows_by_date,
+            short_dte_max=short_dte_max,
+            gap_dte_max=gap_dte_max,
+        )
+        if not weekly_candidates:
+            return SymbolEvaluationResult(
+                symbol=symbol,
+                weekly_candidate_rows=[],
+                detail_rows=[],
+                status_message=f"{symbol}: no ATM short>long weekly calendars in range",
+            )
+        mark_dates = {candidate.short_expiration for candidate in weekly_candidates}
+        mark_option_rows_by_date = _load_option_rows_for_dates(
+            session,
+            symbol=symbol,
+            trade_dates=mark_dates,
+        )
+        option_feature_rows = pwm._load_option_feature_rows(
+            session,
+            symbol=symbol,
+            start_date=entry_start_date,
+            end_date=entry_end_date,
+            warmup_calendar_days=pwm.DEFAULT_WARMUP_CALENDAR_DAYS,
+        )
+        earnings_dates = pwm._load_earnings_dates(
+            session,
+            symbol=symbol,
+            start_date=entry_start_date,
+            end_date=entry_end_date,
+        )
+
+    weekly_candidate_rows = [
+        {
+            "symbol": candidate.symbol,
+            "entry_date": candidate.entry_date.isoformat(),
+            "short_expiration": candidate.short_expiration.isoformat(),
+            "long_expiration": candidate.long_expiration.isoformat(),
+            "spot_close_entry": round(candidate.spot_close_entry, 6),
+            "common_atm_strike": round(candidate.common_atm_strike, 6),
+            "short_atm_iv_pct": round(candidate.short_atm_iv_pct, 6),
+            "long_atm_iv_pct": round(candidate.long_atm_iv_pct, 6),
+            "iv_diff_short_minus_long_pct": round(candidate.short_atm_iv_pct - candidate.long_atm_iv_pct, 6),
+        }
+        for candidate in weekly_candidates
+    ]
+
+    requested_dates = {candidate.entry_date for candidate in weekly_candidates}
+    store = pwm.HistoricalMarketDataStore(factory, factory)
+    option_gateway = pwm.HistoricalOptionGateway(store, symbol)
+    symbol_benchmark_context_by_date = (
+        pwm._build_benchmark_context_by_date(bars)
+        if symbol == pwm.DEFAULT_BENCHMARK_SYMBOL
+        else benchmark_context_by_date
+    )
+    front_iv_series = pwm.build_estimated_iv_series(
+        bars,
+        option_gateway,
+        target_dte=pwm.DEFAULT_FRONT_IV_TARGET_DTE,
+        dte_tolerance_days=pwm.DEFAULT_FRONT_IV_DTE_TOLERANCE_DAYS,
+    )
+    back_iv_series = pwm.build_estimated_iv_series(
+        bars,
+        option_gateway,
+        target_dte=pwm.DEFAULT_BACK_IV_TARGET_DTE,
+        dte_tolerance_days=pwm.DEFAULT_BACK_IV_DTE_TOLERANCE_DAYS,
+    )
+    option_context_by_date = pwm._build_option_context_by_date(
+        bars,
+        option_feature_rows,
+        front_iv_series=front_iv_series,
+    )
+    iv_context_by_date = pwm._build_iv_context_by_date(
+        bars,
+        front_iv_series=front_iv_series,
+        back_iv_series=back_iv_series,
+    )
+    features = pwm._build_feature_matrix(
+        bars,
+        benchmark_context_by_date=symbol_benchmark_context_by_date,
+        earnings_dates=earnings_dates,
+        option_context_by_date=option_context_by_date,
+        iv_context_by_date=iv_context_by_date,
+    )
+    analog_candidates = pwm._build_analog_candidates(
+        bars=bars,
+        features=features,
+        horizon_bars=5,
+    )
+    method = pwm._METHOD_NAME_TO_CONFIG[method_name]
+    prediction_map = _build_prediction_map_for_dates(
+        bars=bars,
+        features=features,
+        candidates=analog_candidates,
+        requested_dates=requested_dates,
+        method=method,
+        horizon_bars=5,
+        min_spacing_bars=5,
+        min_candidate_count=70,
+    )
+
+    detail_rows: list[dict[str, object]] = []
+    for candidate in weekly_candidates:
+        prediction_payload = prediction_map.get(candidate.entry_date)
+        prediction_label = "abstain" if prediction_payload is None else str(prediction_payload["prediction"])
+        if prediction_label not in {"up", "abstain"}:
+            continue
+        mark_spot = spot_by_date.get(candidate.short_expiration)
+        if mark_spot is None:
+            continue
+        entry_rows_by_expiration = entry_option_rows_by_date.get(candidate.entry_date, {})
+        mark_rows_by_expiration = mark_option_rows_by_date.get(candidate.short_expiration, {})
+        if not entry_rows_by_expiration or not mark_rows_by_expiration:
+            continue
+        for delta_target in delta_targets:
+            picked = _pick_calendar_rows_for_delta(
+                entry_rows_by_expiration=entry_rows_by_expiration,
+                short_expiration=candidate.short_expiration,
+                long_expiration=candidate.long_expiration,
+                spot_close_entry=candidate.spot_close_entry,
+                entry_date=candidate.entry_date,
+                common_atm_strike=candidate.common_atm_strike,
+                delta_target_pct=delta_target,
+            )
+            if picked is None:
+                continue
+            short_row, long_row, resolved_short_delta = picked
+            entry_debit = long_row.close_price - short_row.close_price
+            short_mark_rows_by_strike = {
+                row.strike_price: row
+                for row in mark_rows_by_expiration.get(candidate.short_expiration, [])
+            }
+            long_mark_rows_by_strike = {
+                row.strike_price: row
+                for row in mark_rows_by_expiration.get(candidate.long_expiration, [])
+            }
+            short_mark, short_mark_method = _mark_call_leg(
+                rows_by_strike=short_mark_rows_by_strike,
+                target_strike=short_row.strike_price,
+                spot_mark=mark_spot,
+                is_expiring_leg=True,
+            )
+            long_mark, long_mark_method = _mark_call_leg(
+                rows_by_strike=long_mark_rows_by_strike,
+                target_strike=long_row.strike_price,
+                spot_mark=mark_spot,
+                is_expiring_leg=False,
+            )
+            if short_mark is None or long_mark is None:
+                continue
+            spread_mark = long_mark - short_mark
+            pnl = spread_mark - entry_debit
+            roi_pct = None if entry_debit <= 0 else (pnl / entry_debit) * 100.0
+            detail_rows.append(
+                {
+                    "symbol": symbol,
+                    "entry_date": candidate.entry_date.isoformat(),
+                    "prediction": prediction_label,
+                    "selected_method": method_name,
+                    "prediction_engine": method.engine,
+                    "confidence_pct": (
+                        None
+                        if prediction_payload is None
+                        else _round_or_none(float(prediction_payload["confidence_pct"]))
+                    ),
+                    "entry_prediction_direction": prediction_label,
+                    "delta_target_pct": delta_target,
+                    "resolved_short_delta": round(resolved_short_delta, 6),
+                    "spot_close_entry": round(candidate.spot_close_entry, 6),
+                    "spot_close_mark": round(mark_spot, 6),
+                    "common_atm_strike": round(candidate.common_atm_strike, 6),
+                    "short_expiration": candidate.short_expiration.isoformat(),
+                    "long_expiration": candidate.long_expiration.isoformat(),
+                    "short_atm_iv_pct": round(candidate.short_atm_iv_pct, 6),
+                    "long_atm_iv_pct": round(candidate.long_atm_iv_pct, 6),
+                    "iv_diff_short_minus_long_pct": round(
+                        candidate.short_atm_iv_pct - candidate.long_atm_iv_pct,
+                        6,
+                    ),
+                    "short_strike": round(short_row.strike_price, 6),
+                    "long_strike": round(long_row.strike_price, 6),
+                    "short_option_ticker": short_row.option_ticker,
+                    "long_option_ticker": long_row.option_ticker,
+                    "short_close_entry": round(short_row.close_price, 6),
+                    "long_close_entry": round(long_row.close_price, 6),
+                    "entry_debit": round(entry_debit, 6),
+                    "short_close_mark": round(short_mark, 6),
+                    "long_close_mark": round(long_mark, 6),
+                    "short_mark_method": short_mark_method,
+                    "long_mark_method": long_mark_method,
+                    "spread_mark": round(spread_mark, 6),
+                    "pnl": round(pnl, 6),
+                    "roi_pct": _round_or_none(roi_pct),
+                    "nonpositive_debit_flag": int(entry_debit <= 0),
+                }
+            )
+
+    return SymbolEvaluationResult(
+        symbol=symbol,
+        weekly_candidate_rows=weekly_candidate_rows,
+        detail_rows=detail_rows,
+        status_message=(
+            f"{symbol}: built predictions for {len(requested_dates)} filtered Fridays using {method_name}; "
+            f"produced {len(detail_rows)} trade rows"
+        ),
+    )
+
+
 def main() -> int:
     args = build_parser().parse_args()
     if args.entry_start_date > args.entry_end_date:
         raise SystemExit("--entry-start-date must be <= --entry-end-date.")
+    if args.max_workers < 1:
+        raise SystemExit("--max-workers must be >= 1.")
     delta_targets = _parse_delta_targets(args.delta_targets)
     explicit_entry_dates = _parse_entry_dates(args.entry_dates)
     database_url = _load_database_url(args.database_url)
@@ -514,6 +919,9 @@ def main() -> int:
     missing_symbols = [symbol for symbol in symbols if symbol not in selected_method_by_symbol]
     if missing_symbols:
         raise SystemExit(f"Missing selected_method rows in summary CSV for: {', '.join(missing_symbols)}")
+    symbol_cache_dir = None
+    if not args.disable_symbol_cache:
+        symbol_cache_dir = args.symbol_cache_dir or _default_symbol_cache_dir(args.output_prefix)
 
     engine = create_engine(database_url, future=True)
     detail_rows: list[dict[str, object]] = []
@@ -529,240 +937,89 @@ def main() -> int:
                 warmup_calendar_days=pwm.DEFAULT_WARMUP_CALENDAR_DAYS,
             )
         benchmark_context_by_date = pwm._build_benchmark_context_by_date(benchmark_bars)
-
-        for index, symbol in enumerate(symbols, start=1):
-            print(f"[{index:03d}/{len(symbols):03d}] {symbol}: loading weekly option candidates")
-            method_name = selected_method_by_symbol[symbol]
-            with factory() as session:
-                bars = pwm._load_bars(
-                    session,
+        if args.max_workers == 1:
+            for index, symbol in enumerate(symbols, start=1):
+                method_name = selected_method_by_symbol[symbol]
+                metadata = _symbol_cache_metadata(
                     symbol=symbol,
-                    start_date=args.entry_start_date,
-                    end_date=args.entry_end_date + timedelta(days=21),
-                    warmup_calendar_days=pwm.DEFAULT_WARMUP_CALENDAR_DAYS,
-                )
-                if not bars:
-                    print(f"  {symbol}: skipped, no underlying bars")
-                    continue
-                spot_by_date = {
-                    bar.trade_date: float(bar.close_price)
-                    for bar in bars
-                }
-                friday_dates = [
-                    bar.trade_date
-                    for bar in bars
-                    if (
-                        (
-                            explicit_entry_dates
-                            and bar.trade_date in explicit_entry_dates
-                        )
-                        or (
-                            not explicit_entry_dates
-                            and args.entry_start_date <= bar.trade_date <= args.entry_end_date
-                            and bar.trade_date.weekday() == 4
-                        )
-                    )
-                ]
-                entry_option_rows_by_date = _load_option_rows_for_dates(
-                    session,
-                    symbol=symbol,
-                    trade_dates=set(friday_dates),
-                )
-                weekly_candidates = _select_weekly_calendar_candidates(
-                    symbol=symbol,
-                    friday_dates=friday_dates,
-                    spot_by_date=spot_by_date,
-                    option_rows_by_date=entry_option_rows_by_date,
+                    method_name=method_name,
+                    entry_start_date=args.entry_start_date,
+                    entry_end_date=args.entry_end_date,
+                    explicit_entry_dates=explicit_entry_dates,
                     short_dte_max=args.short_dte_max,
                     gap_dte_max=args.gap_dte_max,
+                    delta_targets=delta_targets,
                 )
-                if not weekly_candidates:
-                    print(f"  {symbol}: no ATM short>long weekly calendars in range")
+                cached = _load_cached_symbol_result(cache_dir=symbol_cache_dir, metadata=metadata)
+                if cached is not None:
+                    print(f"[{index:03d}/{len(symbols):03d}] {symbol}: reused cache")
+                    weekly_candidate_rows.extend(cached.weekly_candidate_rows)
+                    detail_rows.extend(cached.detail_rows)
                     continue
-                mark_dates = {candidate.short_expiration for candidate in weekly_candidates}
-                mark_option_rows_by_date = _load_option_rows_for_dates(
-                    session,
+                print(f"[{index:03d}/{len(symbols):03d}] {symbol}: evaluating")
+                result = _evaluate_symbol(
                     symbol=symbol,
-                    trade_dates=mark_dates,
+                    method_name=method_name,
+                    factory=factory,
+                    benchmark_context_by_date=benchmark_context_by_date,
+                    entry_start_date=args.entry_start_date,
+                    entry_end_date=args.entry_end_date,
+                    explicit_entry_dates=explicit_entry_dates,
+                    short_dte_max=args.short_dte_max,
+                    gap_dte_max=args.gap_dte_max,
+                    delta_targets=delta_targets,
                 )
-                option_feature_rows = pwm._load_option_feature_rows(
-                    session,
-                    symbol=symbol,
-                    start_date=args.entry_start_date,
-                    end_date=args.entry_end_date,
-                    warmup_calendar_days=pwm.DEFAULT_WARMUP_CALENDAR_DAYS,
-                )
-                earnings_dates = pwm._load_earnings_dates(
-                    session,
-                    symbol=symbol,
-                    start_date=args.entry_start_date,
-                    end_date=args.entry_end_date,
-                )
-
-            weekly_candidate_rows.extend(
-                {
-                    "symbol": candidate.symbol,
-                    "entry_date": candidate.entry_date.isoformat(),
-                    "short_expiration": candidate.short_expiration.isoformat(),
-                    "long_expiration": candidate.long_expiration.isoformat(),
-                    "spot_close_entry": round(candidate.spot_close_entry, 6),
-                    "common_atm_strike": round(candidate.common_atm_strike, 6),
-                    "short_atm_iv_pct": round(candidate.short_atm_iv_pct, 6),
-                    "long_atm_iv_pct": round(candidate.long_atm_iv_pct, 6),
-                    "iv_diff_short_minus_long_pct": round(candidate.short_atm_iv_pct - candidate.long_atm_iv_pct, 6),
-                }
-                for candidate in weekly_candidates
-            )
-
-            requested_dates = {candidate.entry_date for candidate in weekly_candidates}
-            print(f"  {symbol}: building predictions for {len(requested_dates)} filtered Fridays using {method_name}")
-            store = pwm.HistoricalMarketDataStore(factory, factory)
-            option_gateway = pwm.HistoricalOptionGateway(store, symbol)
-            symbol_benchmark_context_by_date = (
-                pwm._build_benchmark_context_by_date(bars)
-                if symbol == pwm.DEFAULT_BENCHMARK_SYMBOL
-                else benchmark_context_by_date
-            )
-            front_iv_series = pwm.build_estimated_iv_series(
-                bars,
-                option_gateway,
-                target_dte=pwm.DEFAULT_FRONT_IV_TARGET_DTE,
-                dte_tolerance_days=pwm.DEFAULT_FRONT_IV_DTE_TOLERANCE_DAYS,
-            )
-            back_iv_series = pwm.build_estimated_iv_series(
-                bars,
-                option_gateway,
-                target_dte=pwm.DEFAULT_BACK_IV_TARGET_DTE,
-                dte_tolerance_days=pwm.DEFAULT_BACK_IV_DTE_TOLERANCE_DAYS,
-            )
-            option_context_by_date = pwm._build_option_context_by_date(
-                bars,
-                option_feature_rows,
-                front_iv_series=front_iv_series,
-            )
-            iv_context_by_date = pwm._build_iv_context_by_date(
-                bars,
-                front_iv_series=front_iv_series,
-                back_iv_series=back_iv_series,
-            )
-            features = pwm._build_feature_matrix(
-                bars,
-                benchmark_context_by_date=symbol_benchmark_context_by_date,
-                earnings_dates=earnings_dates,
-                option_context_by_date=option_context_by_date,
-                iv_context_by_date=iv_context_by_date,
-            )
-            analog_candidates = pwm._build_analog_candidates(
-                bars=bars,
-                features=features,
-                horizon_bars=5,
-            )
-            method = pwm._METHOD_NAME_TO_CONFIG[method_name]
-            prediction_map = _build_prediction_map_for_dates(
-                bars=bars,
-                features=features,
-                candidates=analog_candidates,
-                requested_dates=requested_dates,
-                method=method,
-                horizon_bars=5,
-                min_spacing_bars=5,
-                min_candidate_count=70,
-            )
-            print(f"  {symbol}: evaluating delta grid")
-            for candidate in weekly_candidates:
-                prediction_payload = prediction_map.get(candidate.entry_date)
-                prediction_label = "abstain" if prediction_payload is None else str(prediction_payload["prediction"])
-                if prediction_label not in {"up", "abstain"}:
+                if result is None:
                     continue
-                mark_spot = spot_by_date.get(candidate.short_expiration)
-                if mark_spot is None:
-                    continue
-                entry_rows_by_expiration = entry_option_rows_by_date.get(candidate.entry_date, {})
-                mark_rows_by_expiration = mark_option_rows_by_date.get(candidate.short_expiration, {})
-                if not entry_rows_by_expiration or not mark_rows_by_expiration:
-                    continue
-                for delta_target in delta_targets:
-                    picked = _pick_calendar_rows_for_delta(
-                        entry_rows_by_expiration=entry_rows_by_expiration,
-                        short_expiration=candidate.short_expiration,
-                        long_expiration=candidate.long_expiration,
-                        spot_close_entry=candidate.spot_close_entry,
-                        entry_date=candidate.entry_date,
-                        common_atm_strike=candidate.common_atm_strike,
-                        delta_target_pct=delta_target,
+                _store_cached_symbol_result(cache_dir=symbol_cache_dir, metadata=metadata, result=result)
+                weekly_candidate_rows.extend(result.weekly_candidate_rows)
+                detail_rows.extend(result.detail_rows)
+                print(f"  {result.status_message}")
+        else:
+            with ThreadPoolExecutor(max_workers=args.max_workers) as executor:
+                future_to_symbol: dict[object, tuple[int, str, dict[str, object]]] = {}
+                for index, symbol in enumerate(symbols, start=1):
+                    method_name = selected_method_by_symbol[symbol]
+                    metadata = _symbol_cache_metadata(
+                        symbol=symbol,
+                        method_name=method_name,
+                        entry_start_date=args.entry_start_date,
+                        entry_end_date=args.entry_end_date,
+                        explicit_entry_dates=explicit_entry_dates,
+                        short_dte_max=args.short_dte_max,
+                        gap_dte_max=args.gap_dte_max,
+                        delta_targets=delta_targets,
                     )
-                    if picked is None:
+                    cached = _load_cached_symbol_result(cache_dir=symbol_cache_dir, metadata=metadata)
+                    if cached is not None:
+                        print(f"[{index:03d}/{len(symbols):03d}] {symbol}: reused cache")
+                        weekly_candidate_rows.extend(cached.weekly_candidate_rows)
+                        detail_rows.extend(cached.detail_rows)
                         continue
-                    short_row, long_row, resolved_short_delta = picked
-                    entry_debit = long_row.close_price - short_row.close_price
-                    short_mark_rows_by_strike = {
-                        row.strike_price: row
-                        for row in mark_rows_by_expiration.get(candidate.short_expiration, [])
-                    }
-                    long_mark_rows_by_strike = {
-                        row.strike_price: row
-                        for row in mark_rows_by_expiration.get(candidate.long_expiration, [])
-                    }
-                    short_mark, short_mark_method = _mark_call_leg(
-                        rows_by_strike=short_mark_rows_by_strike,
-                        target_strike=short_row.strike_price,
-                        spot_mark=mark_spot,
-                        is_expiring_leg=True,
+                    future = executor.submit(
+                        _evaluate_symbol,
+                        symbol=symbol,
+                        method_name=method_name,
+                        factory=factory,
+                        benchmark_context_by_date=benchmark_context_by_date,
+                        entry_start_date=args.entry_start_date,
+                        entry_end_date=args.entry_end_date,
+                        explicit_entry_dates=explicit_entry_dates,
+                        short_dte_max=args.short_dte_max,
+                        gap_dte_max=args.gap_dte_max,
+                        delta_targets=delta_targets,
                     )
-                    long_mark, long_mark_method = _mark_call_leg(
-                        rows_by_strike=long_mark_rows_by_strike,
-                        target_strike=long_row.strike_price,
-                        spot_mark=mark_spot,
-                        is_expiring_leg=False,
-                    )
-                    if short_mark is None or long_mark is None:
+                    future_to_symbol[future] = (index, symbol, metadata)
+                for future in as_completed(future_to_symbol):
+                    index, symbol, metadata = future_to_symbol[future]
+                    result = future.result()
+                    print(f"[{index:03d}/{len(symbols):03d}] {symbol}: complete")
+                    if result is None:
                         continue
-                    spread_mark = long_mark - short_mark
-                    pnl = spread_mark - entry_debit
-                    roi_pct = None if entry_debit <= 0 else (pnl / entry_debit) * 100.0
-                    detail_rows.append(
-                        {
-                            "symbol": symbol,
-                            "entry_date": candidate.entry_date.isoformat(),
-                            "prediction": prediction_label,
-                            "selected_method": method_name,
-                            "prediction_engine": method.engine,
-                            "confidence_pct": (
-                                None
-                                if prediction_payload is None
-                                else _round_or_none(float(prediction_payload["confidence_pct"]))
-                            ),
-                            "entry_prediction_direction": prediction_label,
-                            "delta_target_pct": delta_target,
-                            "resolved_short_delta": round(resolved_short_delta, 6),
-                            "spot_close_entry": round(candidate.spot_close_entry, 6),
-                            "spot_close_mark": round(mark_spot, 6),
-                            "common_atm_strike": round(candidate.common_atm_strike, 6),
-                            "short_expiration": candidate.short_expiration.isoformat(),
-                            "long_expiration": candidate.long_expiration.isoformat(),
-                            "short_atm_iv_pct": round(candidate.short_atm_iv_pct, 6),
-                            "long_atm_iv_pct": round(candidate.long_atm_iv_pct, 6),
-                            "iv_diff_short_minus_long_pct": round(
-                                candidate.short_atm_iv_pct - candidate.long_atm_iv_pct,
-                                6,
-                            ),
-                            "short_strike": round(short_row.strike_price, 6),
-                            "long_strike": round(long_row.strike_price, 6),
-                            "short_option_ticker": short_row.option_ticker,
-                            "long_option_ticker": long_row.option_ticker,
-                            "short_close_entry": round(short_row.close_price, 6),
-                            "long_close_entry": round(long_row.close_price, 6),
-                            "entry_debit": round(entry_debit, 6),
-                            "short_close_mark": round(short_mark, 6),
-                            "long_close_mark": round(long_mark, 6),
-                            "short_mark_method": short_mark_method,
-                            "long_mark_method": long_mark_method,
-                            "spread_mark": round(spread_mark, 6),
-                            "pnl": round(pnl, 6),
-                            "roi_pct": _round_or_none(roi_pct),
-                            "nonpositive_debit_flag": int(entry_debit <= 0),
-                        }
-                    )
+                    _store_cached_symbol_result(cache_dir=symbol_cache_dir, metadata=metadata, result=result)
+                    weekly_candidate_rows.extend(result.weekly_candidate_rows)
+                    detail_rows.extend(result.detail_rows)
+                    print(f"  {result.status_message}")
     finally:
         engine.dispose()
 

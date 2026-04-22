@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import sys
+from datetime import date
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts"))
 
+import compare_short_iv_gt_long_management_rules_3weeks as mgmt  # noqa: E402
 import evaluate_short_iv_gt_long_conditional_management_3weeks as module  # noqa: E402
 
 
@@ -15,7 +17,7 @@ def test_best_combined_policy_label_points_to_preferred_filtered_variant() -> No
     )
     assert (
         module.BEST_COMBINED_PORTFOLIO_POLICY_LABEL
-        == module.BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN3_WORST_METHOD_SKIP_METHOD_CAP12_POLICY_LABEL
+        == module.BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN3_WORST_METHOD_SKIP_METHOD_CAP12_PNL_OVER_DEBIT_15_MIN5_POLICY_LABEL
     )
     assert (
         module.BEST_COMBINED_PORTFOLIO_LIVE_POLICY_LABEL
@@ -121,6 +123,13 @@ def test_method_side_candidate_label_chain_derives_from_promoted_base_policy() -
         == f"{module.BEST_COMBINED_WORST_METHOD_SKIP_POLICY_LABEL}__top43_52w_symbol_median_roi_min5__method_cap12"
     )
     assert (
+        module.BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN3_WORST_METHOD_SKIP_METHOD_CAP12_PNL_OVER_DEBIT_15_MIN5_POLICY_LABEL
+        == (
+            f"{module.BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN3_WORST_METHOD_SKIP_METHOD_CAP12_POLICY_LABEL}"
+            "__pnl_over_debit_15_min5"
+        )
+    )
+    assert (
         module.BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN3_WORST_METHOD_SKIP_VIX_ABS_GT_10_HALF_SIZE_POLICY_LABEL
         == (
             f"{module.BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN3_WORST_METHOD_SKIP_POLICY_LABEL}"
@@ -140,6 +149,36 @@ def test_method_side_candidate_label_chain_derives_from_promoted_base_policy() -
             f"{module.BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN3_WORST_METHOD_SKIP_METHOD_CAP12_POLICY_LABEL}"
             "__weekly_debit_budget_40"
         )
+    )
+    assert (
+        module.BEST_COMBINED_TOP43_SYMBOL_LOWEST_DRAWDOWN_PCT_MIN3_WORST_METHOD_SKIP_METHOD_CAP12_POLICY_LABEL
+        == f"{module.BEST_COMBINED_WORST_METHOD_SKIP_POLICY_LABEL}__top43_52w_symbol_lowest_drawdown_pct_min3__method_cap12"
+    )
+    assert (
+        module.BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MINUS_DRAWDOWN_PCT_MIN3_WORST_METHOD_SKIP_METHOD_CAP12_POLICY_LABEL
+        == (
+            f"{module.BEST_COMBINED_WORST_METHOD_SKIP_POLICY_LABEL}"
+            "__top43_52w_symbol_median_roi_minus_drawdown_pct_min3__method_cap12"
+        )
+    )
+    assert (
+        module.BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_PLUS_P25_MIN3_WORST_METHOD_SKIP_METHOD_CAP12_POLICY_LABEL
+        == f"{module.BEST_COMBINED_WORST_METHOD_SKIP_POLICY_LABEL}__top43_52w_symbol_median_roi_plus_p25_min3__method_cap12"
+    )
+    assert (
+        module.BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MINUS_CVAR10_LOSS_MIN3_WORST_METHOD_SKIP_METHOD_CAP12_POLICY_LABEL
+        == (
+            f"{module.BEST_COMBINED_WORST_METHOD_SKIP_POLICY_LABEL}"
+            "__top43_52w_symbol_median_roi_minus_cvar10_loss_min3__method_cap12"
+        )
+    )
+    assert (
+        module.BEST_COMBINED_TOP43_SYMBOL_PROFIT_FACTOR_GUARDED_MIN3_WORST_METHOD_SKIP_METHOD_CAP12_POLICY_LABEL
+        == f"{module.BEST_COMBINED_WORST_METHOD_SKIP_POLICY_LABEL}__top43_52w_symbol_profit_factor_guarded_min3__method_cap12"
+    )
+    assert (
+        module.BEST_COMBINED_TOP43_SYMBOL_SORTINO_GUARDED_MIN3_WORST_METHOD_SKIP_METHOD_CAP12_POLICY_LABEL
+        == f"{module.BEST_COMBINED_WORST_METHOD_SKIP_POLICY_LABEL}__top43_52w_symbol_sortino_guarded_min3__method_cap12"
     )
     assert (
         module.BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN3_ABSTAIN_CAP29_POLICY_LABEL
@@ -511,9 +550,92 @@ def test_derive_symbol_median_roi_topk_rows_honors_weekly_positive_entry_debit_b
     ]
 
 
+def test_derive_symbol_lookback_pnl_over_debit_filtered_rows_uses_source_history() -> None:
+    rows = [
+        {"entry_date": "2025-01-03", "symbol": "AAA", "prediction": "abstain", "policy_label": "base", "entry_debit": 2.0, "pnl": 0.0, "roi_pct": 0.0},
+        {"entry_date": "2025-01-10", "symbol": "AAA", "prediction": "abstain", "policy_label": "base", "entry_debit": 2.0, "pnl": 0.0, "roi_pct": 0.0},
+        {"entry_date": "2025-01-17", "symbol": "AAA", "prediction": "abstain", "policy_label": "base", "entry_debit": 2.0, "pnl": 0.0, "roi_pct": 0.0},
+        {"entry_date": "2025-01-24", "symbol": "AAA", "prediction": "abstain", "policy_label": "base", "entry_debit": 2.0, "pnl": 0.0, "roi_pct": 0.0},
+        {"entry_date": "2025-01-31", "symbol": "AAA", "prediction": "abstain", "policy_label": "base", "entry_debit": 2.0, "pnl": 0.0, "roi_pct": 0.0},
+        {"entry_date": "2025-02-07", "symbol": "AAA", "prediction": "abstain", "policy_label": "base", "entry_debit": 2.0, "pnl": 4.0, "roi_pct": 200.0},
+        {"entry_date": "2025-02-14", "symbol": "AAA", "prediction": "abstain", "policy_label": "base", "entry_debit": 2.0, "pnl": 0.2, "roi_pct": 10.0},
+        {"entry_date": "2025-01-03", "symbol": "BBB", "prediction": "abstain", "policy_label": "base", "entry_debit": 2.0, "pnl": 1.0, "roi_pct": 50.0},
+        {"entry_date": "2025-01-10", "symbol": "BBB", "prediction": "abstain", "policy_label": "base", "entry_debit": 2.0, "pnl": 1.0, "roi_pct": 50.0},
+        {"entry_date": "2025-01-17", "symbol": "BBB", "prediction": "abstain", "policy_label": "base", "entry_debit": 2.0, "pnl": 1.0, "roi_pct": 50.0},
+        {"entry_date": "2025-01-24", "symbol": "BBB", "prediction": "abstain", "policy_label": "base", "entry_debit": 2.0, "pnl": 1.0, "roi_pct": 50.0},
+        {"entry_date": "2025-01-31", "symbol": "BBB", "prediction": "abstain", "policy_label": "base", "entry_debit": 2.0, "pnl": 1.0, "roi_pct": 50.0},
+        {"entry_date": "2025-02-07", "symbol": "BBB", "prediction": "abstain", "policy_label": "base", "entry_debit": 2.0, "pnl": 0.2, "roi_pct": 10.0},
+        {"entry_date": "2025-02-14", "symbol": "BBB", "prediction": "abstain", "policy_label": "base", "entry_debit": 2.0, "pnl": 0.2, "roi_pct": 10.0},
+    ]
+
+    filtered = module._derive_symbol_lookback_pnl_over_debit_filtered_rows(
+        rows=rows,
+        source_policy_label="base",
+        derived_policy_label="filtered",
+        min_history_trades=5,
+        min_pnl_over_debit_pct=15.0,
+    )
+
+    assert [(row["entry_date"], row["symbol"]) for row in filtered] == [
+        ("2025-01-03", "AAA"),
+        ("2025-01-03", "BBB"),
+        ("2025-01-10", "AAA"),
+        ("2025-01-10", "BBB"),
+        ("2025-01-17", "AAA"),
+        ("2025-01-17", "BBB"),
+        ("2025-01-24", "AAA"),
+        ("2025-01-24", "BBB"),
+        ("2025-01-31", "AAA"),
+        ("2025-01-31", "BBB"),
+        ("2025-02-07", "BBB"),
+        ("2025-02-14", "AAA"),
+        ("2025-02-14", "BBB"),
+    ]
+
+
 def test_score_history_by_median_roi_minus_negative_p25_penalizes_negative_tail() -> None:
     assert module._score_history_by_median_roi_minus_negative_p25([10.0, 20.0, 30.0, 40.0]) == 25.0
     assert module._score_history_by_median_roi_minus_negative_p25([-40.0, -40.0, 80.0, 80.0]) == -20.0
+
+
+def test_history_max_drawdown_pct_uses_chronological_roi_curve() -> None:
+    assert round(module._history_max_drawdown_pct([10.0, -20.0, 5.0]) or 0.0, 4) == 18.1818
+    assert round(module._history_max_drawdown_pct([-40.0, 80.0, -20.0]) or 0.0, 4) == 40.0
+
+
+def test_score_history_by_lowest_drawdown_pct_prefers_smaller_drawdown() -> None:
+    assert round(module._score_history_by_lowest_drawdown_pct([10.0, -20.0, 5.0]) or 0.0, 4) == -18.1818
+    assert round(module._score_history_by_lowest_drawdown_pct([-40.0, 80.0, -20.0]) or 0.0, 4) == -40.0
+
+
+def test_score_history_by_median_roi_minus_drawdown_pct_penalizes_deeper_history_drawdown() -> None:
+    assert round(module._score_history_by_median_roi_minus_drawdown_pct([10.0, -20.0, 5.0]) or 0.0, 4) == -13.1818
+    assert round(module._score_history_by_median_roi_minus_drawdown_pct([-40.0, 80.0, -20.0]) or 0.0, 4) == -60.0
+
+
+def test_score_history_by_median_roi_plus_p25_rewards_stronger_lower_quartile() -> None:
+    assert round(module._score_history_by_median_roi_plus_p25([10.0, 20.0, 30.0]) or 0.0, 4) == 35.0
+    assert round(module._score_history_by_median_roi_plus_p25([-40.0, 10.0, 30.0, 50.0]) or 0.0, 4) == 17.5
+
+
+def test_history_cvar_loss_pct_measures_worst_tail_loss_only() -> None:
+    assert round(module._history_cvar_loss_pct([10.0, 20.0, 30.0]) or 0.0, 4) == 0.0
+    assert round(module._history_cvar_loss_pct([-40.0, 10.0, 30.0, 50.0]) or 0.0, 4) == 40.0
+
+
+def test_score_history_by_median_roi_minus_cvar10_loss_penalizes_tail_loss() -> None:
+    assert round(module._score_history_by_median_roi_minus_cvar10_loss([10.0, 20.0, 30.0]) or 0.0, 4) == 20.0
+    assert round(module._score_history_by_median_roi_minus_cvar10_loss([-40.0, 10.0, 30.0, 50.0]) or 0.0, 4) == -20.0
+
+
+def test_score_history_by_profit_factor_guarded_caps_explosive_win_only_histories() -> None:
+    assert round(module._score_history_by_profit_factor_guarded([10.0, 20.0, -5.0]) or 0.0, 4) == 19.4591
+    assert round(module._score_history_by_profit_factor_guarded([10.0, 20.0, 30.0]) or 0.0, 4) == 47.9579
+
+
+def test_score_history_by_sortino_guarded_caps_zero_downside_and_penalizes_losses() -> None:
+    assert round(module._score_history_by_sortino_guarded([10.0, 20.0, 30.0]) or 0.0, 4) == 5.0
+    assert round(module._score_history_by_sortino_guarded([10.0, 20.0, -10.0]) or 0.0, 4) == 1.1547
 
 
 def test_is_worst_method_trade_targets_vote40rsi_and_mlgbp68_only() -> None:
@@ -787,6 +909,907 @@ def test_derive_stress_method_half_size_policy_rows_only_half_sizes_targeted_met
     assert unchanged["position_size_weight"] == 1.0
     assert unchanged["position_sizing_rule"] == ""
     assert unchanged["entry_debit"] == 1.5
+
+
+def test_simulate_exit_last_pre_expiration_if_negative_exits_on_last_pre_expiration_mark() -> None:
+    trade_row = {
+        "symbol": "ABC",
+        "entry_date": "2025-01-03",
+        "prediction": "abstain",
+        "selected_method": "mlgbp72",
+        "prediction_engine": "auto",
+        "confidence_pct": "",
+        "best_delta_target_pct": "50",
+        "spot_close_entry": "100",
+        "entry_debit": "2.0",
+        "short_expiration": "2025-01-10",
+        "long_expiration": "2025-01-17",
+        "short_strike": "100",
+        "spread_mark": "0.25",
+        "pnl": "-1.75",
+        "short_mark_method": "entry",
+        "long_mark_method": "entry",
+    }
+    option_rows_by_date = {
+        date(2025, 1, 9): {
+            date(2025, 1, 10): [
+                module.tp_grid.delta_grid.OptionRow(
+                    option_ticker="O:ABC250110C00100000",
+                    trade_date=date(2025, 1, 9),
+                    expiration_date=date(2025, 1, 10),
+                    strike_price=100.0,
+                    close_price=2.5,
+                )
+            ],
+            date(2025, 1, 17): [
+                module.tp_grid.delta_grid.OptionRow(
+                    option_ticker="O:ABC250117C00100000",
+                    trade_date=date(2025, 1, 9),
+                    expiration_date=date(2025, 1, 17),
+                    strike_price=100.0,
+                    close_price=1.0,
+                )
+            ],
+        },
+        date(2025, 1, 10): {
+            date(2025, 1, 10): [
+                module.tp_grid.delta_grid.OptionRow(
+                    option_ticker="O:ABC250110C00100000",
+                    trade_date=date(2025, 1, 10),
+                    expiration_date=date(2025, 1, 10),
+                    strike_price=100.0,
+                    close_price=0.0,
+                )
+            ],
+            date(2025, 1, 17): [
+                module.tp_grid.delta_grid.OptionRow(
+                    option_ticker="O:ABC250117C00100000",
+                    trade_date=date(2025, 1, 10),
+                    expiration_date=date(2025, 1, 17),
+                    strike_price=100.0,
+                    close_price=0.5,
+                )
+            ],
+        },
+    }
+    result = mgmt._simulate_exit_last_pre_expiration_if_negative(
+        trade_row=trade_row,
+        option_rows_by_date=option_rows_by_date,
+        spot_by_date={
+            date(2025, 1, 9): 99.0,
+            date(2025, 1, 10): 98.0,
+        },
+        path_dates=[date(2025, 1, 9), date(2025, 1, 10)],
+    )
+
+    assert result["exit_date"] == "2025-01-09"
+    assert result["exit_reason"] == "last_pre_expiration_negative"
+    assert result["spread_mark"] == -1.5
+    assert result["pnl"] == -3.5
+    assert result["roi_pct"] == -175.0
+
+
+def test_simulate_abstain_roll_short_forward_one_week_on_first_breach_rolls_to_higher_long_exp_strike() -> None:
+    trade_row = {
+        "symbol": "ABC",
+        "entry_date": "2025-01-03",
+        "prediction": "abstain",
+        "selected_method": "mlgbp72",
+        "prediction_engine": "auto",
+        "confidence_pct": "",
+        "best_delta_target_pct": "50",
+        "spot_close_entry": "100",
+        "entry_debit": "1.0",
+        "short_expiration": "2025-01-10",
+        "long_expiration": "2025-01-17",
+        "short_strike": "100",
+        "spread_mark": "0.25",
+        "pnl": "-0.75",
+        "short_mark_method": "entry",
+        "long_mark_method": "entry",
+    }
+    option_rows_by_date = {
+        date(2025, 1, 9): {
+            date(2025, 1, 10): [
+                module.tp_grid.delta_grid.OptionRow(
+                    option_ticker="O:ABC250110C00100000",
+                    trade_date=date(2025, 1, 9),
+                    expiration_date=date(2025, 1, 10),
+                    strike_price=100.0,
+                    close_price=1.8,
+                )
+            ],
+            date(2025, 1, 17): [
+                module.tp_grid.delta_grid.OptionRow(
+                    option_ticker="O:ABC250117C00100000",
+                    trade_date=date(2025, 1, 9),
+                    expiration_date=date(2025, 1, 17),
+                    strike_price=100.0,
+                    close_price=2.4,
+                ),
+                module.tp_grid.delta_grid.OptionRow(
+                    option_ticker="O:ABC250117C00101000",
+                    trade_date=date(2025, 1, 9),
+                    expiration_date=date(2025, 1, 17),
+                    strike_price=101.0,
+                    close_price=1.0,
+                ),
+                module.tp_grid.delta_grid.OptionRow(
+                    option_ticker="O:ABC250117C00102000",
+                    trade_date=date(2025, 1, 9),
+                    expiration_date=date(2025, 1, 17),
+                    strike_price=102.0,
+                    close_price=0.8,
+                ),
+            ],
+        },
+        date(2025, 1, 17): {
+            date(2025, 1, 17): [
+                module.tp_grid.delta_grid.OptionRow(
+                    option_ticker="O:ABC250117C00100000",
+                    trade_date=date(2025, 1, 17),
+                    expiration_date=date(2025, 1, 17),
+                    strike_price=100.0,
+                    close_price=1.2,
+                ),
+                module.tp_grid.delta_grid.OptionRow(
+                    option_ticker="O:ABC250117C00101000",
+                    trade_date=date(2025, 1, 17),
+                    expiration_date=date(2025, 1, 17),
+                    strike_price=101.0,
+                    close_price=0.6,
+                ),
+                module.tp_grid.delta_grid.OptionRow(
+                    option_ticker="O:ABC250117C00102000",
+                    trade_date=date(2025, 1, 17),
+                    expiration_date=date(2025, 1, 17),
+                    strike_price=102.0,
+                    close_price=0.3,
+                ),
+            ]
+        },
+    }
+
+    result = mgmt._simulate_abstain_roll_short_forward_one_week_on_first_breach(
+        trade_row=trade_row,
+        option_rows_by_date=option_rows_by_date,
+        spot_by_date={
+            date(2025, 1, 9): 101.5,
+            date(2025, 1, 17): 100.5,
+        },
+        path_dates=[date(2025, 1, 9), date(2025, 1, 17)],
+        strike_steps=1,
+    )
+
+    assert result["roll_count"] == 1
+    assert result["roll_date"] == "2025-01-09"
+    assert result["roll_from_strike"] == 100.0
+    assert result["roll_to_strike"] == 101.0
+    assert result["roll_net_debit"] == 0.8
+    assert result["entry_debit"] == 1.8
+    assert result["exit_date"] == "2025-01-17"
+    assert result["short_strike"] == 101.0
+
+
+def test_simulate_abstain_roll_short_same_week_atm_once_rolls_to_same_exp_atm_strike() -> None:
+    trade_row = {
+        "symbol": "ABC",
+        "entry_date": "2025-01-03",
+        "prediction": "abstain",
+        "selected_method": "mlgbp72",
+        "prediction_engine": "auto",
+        "confidence_pct": "",
+        "best_delta_target_pct": "50",
+        "spot_close_entry": "100",
+        "entry_debit": "1.0",
+        "short_expiration": "2025-01-10",
+        "long_expiration": "2025-01-17",
+        "short_strike": "100",
+        "spread_mark": "0.25",
+        "pnl": "-0.75",
+        "short_mark_method": "entry",
+        "long_mark_method": "entry",
+    }
+    option_rows_by_date = {
+        date(2025, 1, 9): {
+            date(2025, 1, 10): [
+                module.tp_grid.delta_grid.OptionRow(
+                    option_ticker="O:ABC250110C00100000",
+                    trade_date=date(2025, 1, 9),
+                    expiration_date=date(2025, 1, 10),
+                    strike_price=100.0,
+                    close_price=1.8,
+                ),
+                module.tp_grid.delta_grid.OptionRow(
+                    option_ticker="O:ABC250110C00101000",
+                    trade_date=date(2025, 1, 9),
+                    expiration_date=date(2025, 1, 10),
+                    strike_price=101.0,
+                    close_price=1.0,
+                ),
+                module.tp_grid.delta_grid.OptionRow(
+                    option_ticker="O:ABC250110C00102000",
+                    trade_date=date(2025, 1, 9),
+                    expiration_date=date(2025, 1, 10),
+                    strike_price=102.0,
+                    close_price=0.7,
+                ),
+            ],
+            date(2025, 1, 17): [
+                module.tp_grid.delta_grid.OptionRow(
+                    option_ticker="O:ABC250117C00100000",
+                    trade_date=date(2025, 1, 9),
+                    expiration_date=date(2025, 1, 17),
+                    strike_price=100.0,
+                    close_price=2.4,
+                )
+            ],
+        },
+        date(2025, 1, 10): {
+            date(2025, 1, 10): [
+                module.tp_grid.delta_grid.OptionRow(
+                    option_ticker="O:ABC250110C00101000",
+                    trade_date=date(2025, 1, 10),
+                    expiration_date=date(2025, 1, 10),
+                    strike_price=101.0,
+                    close_price=0.3,
+                )
+            ],
+            date(2025, 1, 17): [
+                module.tp_grid.delta_grid.OptionRow(
+                    option_ticker="O:ABC250117C00100000",
+                    trade_date=date(2025, 1, 10),
+                    expiration_date=date(2025, 1, 17),
+                    strike_price=100.0,
+                    close_price=0.9,
+                )
+            ],
+        },
+    }
+
+    result = mgmt._simulate_abstain_roll_short_same_week_atm_once(
+        trade_row=trade_row,
+        option_rows_by_date=option_rows_by_date,
+        spot_by_date={
+            date(2025, 1, 9): 101.5,
+            date(2025, 1, 10): 100.2,
+        },
+        path_dates=[date(2025, 1, 9), date(2025, 1, 10)],
+    )
+
+    assert result["roll_count"] == 1
+    assert result["roll_date"] == "2025-01-09"
+    assert result["roll_from_strike"] == 100.0
+    assert result["roll_to_strike"] == 102.0
+    assert result["roll_net_debit"] == 1.1
+    assert result["entry_debit"] == 2.1
+    assert result["exit_date"] == "2025-01-10"
+    assert result["short_strike"] == 102.0
+
+
+def test_simulate_abstain_roll_both_legs_same_week_atm_once_rolls_both_legs_to_common_strike() -> None:
+    trade_row = {
+        "symbol": "ABC",
+        "entry_date": "2025-01-03",
+        "prediction": "abstain",
+        "selected_method": "mlgbp72",
+        "prediction_engine": "auto",
+        "confidence_pct": "",
+        "best_delta_target_pct": "50",
+        "spot_close_entry": "100",
+        "entry_debit": "1.0",
+        "short_expiration": "2025-01-10",
+        "long_expiration": "2025-01-17",
+        "short_strike": "100",
+        "spread_mark": "0.25",
+        "pnl": "-0.75",
+        "short_mark_method": "entry",
+        "long_mark_method": "entry",
+    }
+    option_rows_by_date = {
+        date(2025, 1, 9): {
+            date(2025, 1, 10): [
+                module.tp_grid.delta_grid.OptionRow(
+                    option_ticker="O:ABC250110C00100000",
+                    trade_date=date(2025, 1, 9),
+                    expiration_date=date(2025, 1, 10),
+                    strike_price=100.0,
+                    close_price=1.8,
+                ),
+                module.tp_grid.delta_grid.OptionRow(
+                    option_ticker="O:ABC250110C00102000",
+                    trade_date=date(2025, 1, 9),
+                    expiration_date=date(2025, 1, 10),
+                    strike_price=102.0,
+                    close_price=0.7,
+                ),
+            ],
+            date(2025, 1, 17): [
+                module.tp_grid.delta_grid.OptionRow(
+                    option_ticker="O:ABC250117C00100000",
+                    trade_date=date(2025, 1, 9),
+                    expiration_date=date(2025, 1, 17),
+                    strike_price=100.0,
+                    close_price=2.4,
+                ),
+                module.tp_grid.delta_grid.OptionRow(
+                    option_ticker="O:ABC250117C00102000",
+                    trade_date=date(2025, 1, 9),
+                    expiration_date=date(2025, 1, 17),
+                    strike_price=102.0,
+                    close_price=1.5,
+                ),
+            ],
+        },
+        date(2025, 1, 10): {
+            date(2025, 1, 10): [
+                module.tp_grid.delta_grid.OptionRow(
+                    option_ticker="O:ABC250110C00102000",
+                    trade_date=date(2025, 1, 10),
+                    expiration_date=date(2025, 1, 10),
+                    strike_price=102.0,
+                    close_price=0.3,
+                )
+            ],
+            date(2025, 1, 17): [
+                module.tp_grid.delta_grid.OptionRow(
+                    option_ticker="O:ABC250117C00102000",
+                    trade_date=date(2025, 1, 10),
+                    expiration_date=date(2025, 1, 17),
+                    strike_price=102.0,
+                    close_price=0.9,
+                )
+            ],
+        },
+    }
+
+    result = mgmt._simulate_abstain_roll_both_legs_same_week_atm_once(
+        trade_row=trade_row,
+        option_rows_by_date=option_rows_by_date,
+        spot_by_date={
+            date(2025, 1, 9): 101.5,
+            date(2025, 1, 10): 100.2,
+        },
+        path_dates=[date(2025, 1, 9), date(2025, 1, 10)],
+    )
+
+    assert result["roll_count"] == 1
+    assert result["roll_date"] == "2025-01-09"
+    assert result["roll_from_strike"] == 100.0
+    assert result["roll_to_strike"] == 102.0
+    assert result["roll_net_debit"] == 0.2
+    assert result["entry_debit"] == 1.2
+    assert result["exit_date"] == "2025-01-10"
+    assert result["short_strike"] == 102.0
+    assert result["long_strike"] == 102.0
+
+
+def test_simulate_abstain_convert_to_same_week_atm_butterfly_on_first_up_breach() -> None:
+    trade_row = {
+        "symbol": "ABC",
+        "entry_date": "2025-01-03",
+        "prediction": "abstain",
+        "selected_method": "mlgbp72",
+        "prediction_engine": "auto",
+        "confidence_pct": "",
+        "best_delta_target_pct": "50",
+        "spot_close_entry": "100",
+        "entry_debit": "1.0",
+        "short_expiration": "2025-01-10",
+        "long_expiration": "2025-01-17",
+        "short_strike": "100",
+        "long_strike": "100",
+        "spread_mark": "0.25",
+        "pnl": "-0.75",
+        "short_mark_method": "entry",
+        "long_mark_method": "entry",
+    }
+    call_option_rows_by_date = {
+        date(2025, 1, 9): {
+            date(2025, 1, 10): [
+                module.tp_grid.delta_grid.OptionRow(
+                    option_ticker="O:ABC250110C00100000",
+                    trade_date=date(2025, 1, 9),
+                    expiration_date=date(2025, 1, 10),
+                    strike_price=100.0,
+                    close_price=1.8,
+                ),
+                module.tp_grid.delta_grid.OptionRow(
+                    option_ticker="O:ABC250110C00101000",
+                    trade_date=date(2025, 1, 9),
+                    expiration_date=date(2025, 1, 10),
+                    strike_price=101.0,
+                    close_price=1.0,
+                ),
+                module.tp_grid.delta_grid.OptionRow(
+                    option_ticker="O:ABC250110C00102000",
+                    trade_date=date(2025, 1, 9),
+                    expiration_date=date(2025, 1, 10),
+                    strike_price=102.0,
+                    close_price=0.7,
+                ),
+            ],
+            date(2025, 1, 17): [
+                module.tp_grid.delta_grid.OptionRow(
+                    option_ticker="O:ABC250117C00100000",
+                    trade_date=date(2025, 1, 9),
+                    expiration_date=date(2025, 1, 17),
+                    strike_price=100.0,
+                    close_price=2.4,
+                )
+            ],
+        },
+        date(2025, 1, 10): {
+            date(2025, 1, 10): [
+                module.tp_grid.delta_grid.OptionRow(
+                    option_ticker="O:ABC250110C00100000",
+                    trade_date=date(2025, 1, 10),
+                    expiration_date=date(2025, 1, 10),
+                    strike_price=100.0,
+                    close_price=0.0,
+                ),
+                module.tp_grid.delta_grid.OptionRow(
+                    option_ticker="O:ABC250110C00101000",
+                    trade_date=date(2025, 1, 10),
+                    expiration_date=date(2025, 1, 10),
+                    strike_price=101.0,
+                    close_price=0.3,
+                ),
+                module.tp_grid.delta_grid.OptionRow(
+                    option_ticker="O:ABC250110C00102000",
+                    trade_date=date(2025, 1, 10),
+                    expiration_date=date(2025, 1, 10),
+                    strike_price=102.0,
+                    close_price=0.1,
+                ),
+            ]
+        },
+    }
+
+    result = mgmt._simulate_abstain_convert_to_same_week_atm_butterfly_on_first_breach(
+        trade_row=trade_row,
+        call_option_rows_by_date=call_option_rows_by_date,
+        put_option_rows_by_date={},
+        spot_by_date={
+            date(2025, 1, 9): 101.5,
+            date(2025, 1, 10): 100.2,
+        },
+        path_dates=[date(2025, 1, 9), date(2025, 1, 10)],
+    )
+
+    assert result["roll_count"] == 1
+    assert result["roll_date"] == "2025-01-09"
+    assert result["roll_from_strike"] == 100.0
+    assert result["roll_to_strike"] == 101.0
+    assert result["entry_debit"] == 0.9
+    assert result["exit_date"] == "2025-01-10"
+    assert result["short_strike"] == 101.0
+    assert result["long_strike"] == 101.0
+
+
+def test_simulate_abstain_convert_to_same_week_atm_butterfly_on_first_up_breach_w2() -> None:
+    trade_row = {
+        "symbol": "ABC",
+        "entry_date": "2025-01-03",
+        "prediction": "abstain",
+        "selected_method": "mlgbp72",
+        "prediction_engine": "auto",
+        "confidence_pct": "",
+        "best_delta_target_pct": "50",
+        "spot_close_entry": "100",
+        "entry_debit": "1.0",
+        "short_expiration": "2025-01-10",
+        "long_expiration": "2025-01-17",
+        "short_strike": "100",
+        "long_strike": "100",
+        "spread_mark": "0.25",
+        "pnl": "-0.75",
+        "short_mark_method": "entry",
+        "long_mark_method": "entry",
+    }
+    call_option_rows_by_date = {
+        date(2025, 1, 9): {
+            date(2025, 1, 10): [
+                module.tp_grid.delta_grid.OptionRow(
+                    option_ticker="O:ABC250110C00099000",
+                    trade_date=date(2025, 1, 9),
+                    expiration_date=date(2025, 1, 10),
+                    strike_price=99.0,
+                    close_price=2.5,
+                ),
+                module.tp_grid.delta_grid.OptionRow(
+                    option_ticker="O:ABC250110C00100000",
+                    trade_date=date(2025, 1, 9),
+                    expiration_date=date(2025, 1, 10),
+                    strike_price=100.0,
+                    close_price=1.8,
+                ),
+                module.tp_grid.delta_grid.OptionRow(
+                    option_ticker="O:ABC250110C00101000",
+                    trade_date=date(2025, 1, 9),
+                    expiration_date=date(2025, 1, 10),
+                    strike_price=101.0,
+                    close_price=1.0,
+                ),
+                module.tp_grid.delta_grid.OptionRow(
+                    option_ticker="O:ABC250110C00102000",
+                    trade_date=date(2025, 1, 9),
+                    expiration_date=date(2025, 1, 10),
+                    strike_price=102.0,
+                    close_price=0.7,
+                ),
+                module.tp_grid.delta_grid.OptionRow(
+                    option_ticker="O:ABC250110C00103000",
+                    trade_date=date(2025, 1, 9),
+                    expiration_date=date(2025, 1, 10),
+                    strike_price=103.0,
+                    close_price=0.4,
+                ),
+            ],
+            date(2025, 1, 17): [
+                module.tp_grid.delta_grid.OptionRow(
+                    option_ticker="O:ABC250117C00100000",
+                    trade_date=date(2025, 1, 9),
+                    expiration_date=date(2025, 1, 17),
+                    strike_price=100.0,
+                    close_price=2.4,
+                )
+            ],
+        },
+        date(2025, 1, 10): {
+            date(2025, 1, 10): [
+                module.tp_grid.delta_grid.OptionRow(
+                    option_ticker="O:ABC250110C00099000",
+                    trade_date=date(2025, 1, 10),
+                    expiration_date=date(2025, 1, 10),
+                    strike_price=99.0,
+                    close_price=1.2,
+                ),
+                module.tp_grid.delta_grid.OptionRow(
+                    option_ticker="O:ABC250110C00100000",
+                    trade_date=date(2025, 1, 10),
+                    expiration_date=date(2025, 1, 10),
+                    strike_price=100.0,
+                    close_price=0.6,
+                ),
+                module.tp_grid.delta_grid.OptionRow(
+                    option_ticker="O:ABC250110C00101000",
+                    trade_date=date(2025, 1, 10),
+                    expiration_date=date(2025, 1, 10),
+                    strike_price=101.0,
+                    close_price=0.3,
+                ),
+                module.tp_grid.delta_grid.OptionRow(
+                    option_ticker="O:ABC250110C00102000",
+                    trade_date=date(2025, 1, 10),
+                    expiration_date=date(2025, 1, 10),
+                    strike_price=102.0,
+                    close_price=0.1,
+                ),
+                module.tp_grid.delta_grid.OptionRow(
+                    option_ticker="O:ABC250110C00103000",
+                    trade_date=date(2025, 1, 10),
+                    expiration_date=date(2025, 1, 10),
+                    strike_price=103.0,
+                    close_price=0.0,
+                ),
+            ]
+        },
+    }
+
+    result = mgmt._simulate_abstain_convert_to_same_week_atm_butterfly_on_first_breach(
+        trade_row=trade_row,
+        call_option_rows_by_date=call_option_rows_by_date,
+        put_option_rows_by_date={},
+        spot_by_date={
+            date(2025, 1, 9): 101.5,
+            date(2025, 1, 10): 100.2,
+        },
+        path_dates=[date(2025, 1, 9), date(2025, 1, 10)],
+        wing_steps=2,
+    )
+
+    assert result["policy_label"] == "abstain_convert_to_same_week_atm_butterfly_on_first_breach_w2"
+    assert result["roll_count"] == 1
+    assert result["roll_date"] == "2025-01-09"
+    assert result["roll_from_strike"] == 100.0
+    assert result["roll_to_strike"] == 101.0
+    assert result["entry_debit"] == 1.3
+    assert result["exit_date"] == "2025-01-10"
+    assert result["short_strike"] == 101.0
+    assert result["long_strike"] == 101.0
+
+
+def test_pick_credit_spread_strikes_by_delta_selects_call_short_and_wing() -> None:
+    rows_by_strike = {
+        strike: module.tp_grid.delta_grid.OptionRow(
+            option_ticker=f"O:ABC250110C{int(strike * 1000):08d}",
+            trade_date=date(2025, 1, 9),
+            expiration_date=date(2025, 1, 10),
+            strike_price=strike,
+            close_price=price,
+        )
+        for strike, price in [
+            (99.0, 2.5),
+            (100.0, 1.8),
+            (101.0, 1.0),
+            (102.0, 0.7),
+            (103.0, 0.4),
+            (104.0, 0.2),
+        ]
+    }
+
+    picked = mgmt._pick_credit_spread_strikes_by_delta(
+        rows_by_strike=rows_by_strike,
+        spot_mark=101.5,
+        trade_date=date(2025, 1, 9),
+        expiration=date(2025, 1, 10),
+        contract_type="call",
+        target_abs_delta=0.4,
+        width_steps=2,
+    )
+
+    assert picked == (102.0, 104.0)
+
+
+def test_pick_credit_spread_strikes_by_delta_selects_put_short_and_wing() -> None:
+    rows_by_strike = {
+        strike: module.tp_grid.delta_grid.OptionRow(
+            option_ticker=f"O:ABC250110P{int(strike * 1000):08d}",
+            trade_date=date(2025, 1, 9),
+            expiration_date=date(2025, 1, 10),
+            strike_price=strike,
+            close_price=price,
+        )
+        for strike, price in [
+            (99.0, 0.2),
+            (100.0, 0.4),
+            (101.0, 0.7),
+            (102.0, 1.0),
+            (103.0, 1.8),
+            (104.0, 2.5),
+        ]
+    }
+
+    picked = mgmt._pick_credit_spread_strikes_by_delta(
+        rows_by_strike=rows_by_strike,
+        spot_mark=100.0,
+        trade_date=date(2025, 1, 9),
+        expiration=date(2025, 1, 10),
+        contract_type="put",
+        target_abs_delta=0.3,
+        width_steps=1,
+    )
+
+    assert picked == (100.0, 99.0)
+
+
+def test_simulate_abstain_convert_to_same_week_credit_spread_on_first_up_breach() -> None:
+    trade_row = {
+        "symbol": "ABC",
+        "entry_date": "2025-01-03",
+        "prediction": "abstain",
+        "selected_method": "mlgbp72",
+        "prediction_engine": "auto",
+        "confidence_pct": "",
+        "best_delta_target_pct": "50",
+        "spot_close_entry": "100",
+        "entry_debit": "1.0",
+        "short_expiration": "2025-01-10",
+        "long_expiration": "2025-01-17",
+        "short_strike": "100",
+        "long_strike": "100",
+        "spread_mark": "0.25",
+        "pnl": "-0.75",
+        "short_mark_method": "entry",
+        "long_mark_method": "entry",
+    }
+    call_option_rows_by_date = {
+        date(2025, 1, 9): {
+            date(2025, 1, 10): [
+                module.tp_grid.delta_grid.OptionRow("x", date(2025, 1, 9), date(2025, 1, 10), 99.0, 2.5),
+                module.tp_grid.delta_grid.OptionRow("x", date(2025, 1, 9), date(2025, 1, 10), 100.0, 1.8),
+                module.tp_grid.delta_grid.OptionRow("x", date(2025, 1, 9), date(2025, 1, 10), 101.0, 1.0),
+                module.tp_grid.delta_grid.OptionRow("x", date(2025, 1, 9), date(2025, 1, 10), 102.0, 0.7),
+                module.tp_grid.delta_grid.OptionRow("x", date(2025, 1, 9), date(2025, 1, 10), 103.0, 0.4),
+                module.tp_grid.delta_grid.OptionRow("x", date(2025, 1, 9), date(2025, 1, 10), 104.0, 0.2),
+            ],
+            date(2025, 1, 17): [
+                module.tp_grid.delta_grid.OptionRow("y", date(2025, 1, 9), date(2025, 1, 17), 100.0, 2.4),
+            ],
+        },
+        date(2025, 1, 10): {
+            date(2025, 1, 10): [
+                module.tp_grid.delta_grid.OptionRow("x", date(2025, 1, 10), date(2025, 1, 10), 99.0, 1.3),
+                module.tp_grid.delta_grid.OptionRow("x", date(2025, 1, 10), date(2025, 1, 10), 100.0, 0.7),
+                module.tp_grid.delta_grid.OptionRow("x", date(2025, 1, 10), date(2025, 1, 10), 101.0, 0.35),
+                module.tp_grid.delta_grid.OptionRow("x", date(2025, 1, 10), date(2025, 1, 10), 102.0, 0.15),
+                module.tp_grid.delta_grid.OptionRow("x", date(2025, 1, 10), date(2025, 1, 10), 103.0, 0.05),
+                module.tp_grid.delta_grid.OptionRow("x", date(2025, 1, 10), date(2025, 1, 10), 104.0, 0.0),
+            ]
+        },
+    }
+
+    result = mgmt._simulate_abstain_convert_to_same_week_credit_spread_on_first_breach(
+        trade_row=trade_row,
+        call_option_rows_by_date=call_option_rows_by_date,
+        put_option_rows_by_date={},
+        spot_by_date={
+            date(2025, 1, 9): 101.5,
+            date(2025, 1, 10): 100.2,
+        },
+        path_dates=[date(2025, 1, 9), date(2025, 1, 10)],
+        target_abs_delta_pct=40,
+        width_steps=1,
+    )
+
+    assert result["policy_label"] == "abstain_convert_to_same_week_credit_spread_on_first_breach_d40_w1"
+    assert result["roll_count"] == 1
+    assert result["roll_date"] == "2025-01-09"
+    assert result["roll_from_strike"] == 100.0
+    assert result["roll_to_strike"] == 102.0
+    assert result["entry_debit"] == 1.7
+    assert result["short_strike"] == 102.0
+    assert result["long_strike"] == 103.0
+    assert result["pnl"] == -0.2
+    assert result["roi_pct"] == -11.764706
+
+
+def test_derive_targeted_replacement_policy_rows_preserves_existing_position_size_metadata() -> None:
+    rows = [
+        {
+            "entry_date": "2025-01-10",
+            "symbol": "AAA",
+            "prediction": "abstain",
+            "policy_label": module.BEST_COMBINED_PORTFOLIO_POLICY_LABEL,
+            "selected_method": "mlgbp72",
+            "best_delta_target_pct": 50,
+            "short_expiration": "2025-01-17",
+            "long_expiration": "2025-01-24",
+            "short_strike": 100.0,
+            "long_strike": 100.0,
+            "original_entry_debit": 2.0,
+            "entry_debit": 1.0,
+            "spread_mark": 0.4,
+            "pnl": -0.6,
+            "roll_net_debit": 0.1,
+            "roi_pct": -60.0,
+            "position_size_weight": 0.5,
+            "position_sizing_rule": "half_size_abstain_entry_debit_gt_4",
+        },
+        {
+            "entry_date": "2025-01-10",
+            "symbol": "BBB",
+            "prediction": "up",
+            "policy_label": module.BEST_COMBINED_PORTFOLIO_POLICY_LABEL,
+            "selected_method": "median25trend",
+            "best_delta_target_pct": 45,
+            "short_expiration": "2025-01-17",
+            "long_expiration": "2025-01-24",
+            "short_strike": 120.0,
+            "long_strike": 120.0,
+            "original_entry_debit": 1.0,
+            "entry_debit": 1.0,
+            "spread_mark": 1.3,
+            "pnl": 0.3,
+            "roll_net_debit": 0.0,
+            "roi_pct": 30.0,
+            "position_size_weight": 1.0,
+            "position_sizing_rule": "",
+        },
+        {
+            "entry_date": "2025-01-10",
+            "symbol": "AAA",
+            "prediction": "abstain",
+            "policy_label": module.MLGBP72_ABSTAIN_LAST_PRE_EXPIRATION_NEGATIVE_POLICY_LABEL,
+            "selected_method": "mlgbp72",
+            "best_delta_target_pct": 50,
+            "short_expiration": "2025-01-17",
+            "long_expiration": "2025-01-24",
+            "short_strike": 100.0,
+            "long_strike": 100.0,
+            "original_entry_debit": 4.0,
+            "entry_debit": 2.0,
+            "spread_mark": 0.5,
+            "pnl": -1.5,
+            "roll_net_debit": 0.2,
+            "roi_pct": -75.0,
+            "position_size_weight": 1.0,
+            "position_sizing_rule": "",
+        },
+    ]
+
+    filtered = module._derive_targeted_replacement_policy_rows(
+        rows=rows,
+        source_policy_label=module.BEST_COMBINED_PORTFOLIO_POLICY_LABEL,
+        derived_policy_label="derived",
+        replacement_policy_label=module.MLGBP72_ABSTAIN_LAST_PRE_EXPIRATION_NEGATIVE_POLICY_LABEL,
+        replacement_trade_predicate=module._is_abstain_mlgbp72_trade,
+    )
+
+    assert len(filtered) == 2
+    replaced = filtered[0]
+    assert replaced["policy_label"] == "derived"
+    assert replaced["position_size_weight"] == 0.5
+    assert replaced["position_sizing_rule"] == "half_size_abstain_entry_debit_gt_4"
+    assert replaced["original_entry_debit"] == 2.0
+    assert replaced["entry_debit"] == 1.0
+    assert replaced["spread_mark"] == 0.25
+    assert replaced["pnl"] == -0.75
+    assert replaced["roll_net_debit"] == 0.1
+    assert replaced["roi_pct"] == -75.0
+    assert filtered[1]["symbol"] == "BBB"
+    assert filtered[1]["entry_debit"] == 1.0
+
+
+def test_trade_identity_key_uses_roll_from_strike_for_rolled_rows() -> None:
+    source_key = module._trade_identity_key(
+        {
+            "entry_date": "2025-01-10",
+            "symbol": "AAA",
+            "prediction": "abstain",
+            "selected_method": "mlgbp72",
+            "best_delta_target_pct": 50,
+            "short_expiration": "2025-01-17",
+            "long_expiration": "2025-01-24",
+            "short_strike": 100.0,
+            "long_strike": 100.0,
+            "roll_count": 0,
+        }
+    )
+    rolled_key = module._trade_identity_key(
+        {
+            "entry_date": "2025-01-10",
+            "symbol": "AAA",
+            "prediction": "abstain",
+            "selected_method": "mlgbp72",
+            "best_delta_target_pct": 50,
+            "short_expiration": "2025-01-17",
+            "long_expiration": "2025-01-24",
+            "short_strike": 101.0,
+            "long_strike": 100.0,
+            "roll_count": 1,
+            "roll_from_strike": 100.0,
+        }
+    )
+
+    assert rolled_key == source_key
+
+
+def test_trade_identity_key_prefers_explicit_source_strikes_for_double_roll_rows() -> None:
+    source_key = module._trade_identity_key(
+        {
+            "entry_date": "2025-01-10",
+            "symbol": "AAA",
+            "prediction": "abstain",
+            "selected_method": "mlgbp72",
+            "best_delta_target_pct": 50,
+            "short_expiration": "2025-01-17",
+            "long_expiration": "2025-01-24",
+            "short_strike": 100.0,
+            "long_strike": 100.0,
+            "roll_count": 0,
+        }
+    )
+    rolled_key = module._trade_identity_key(
+        {
+            "entry_date": "2025-01-10",
+            "symbol": "AAA",
+            "prediction": "abstain",
+            "selected_method": "mlgbp72",
+            "best_delta_target_pct": 50,
+            "short_expiration": "2025-01-17",
+            "long_expiration": "2025-01-24",
+            "short_strike": 102.0,
+            "long_strike": 102.0,
+            "roll_count": 1,
+            "roll_from_strike": 100.0,
+            "source_short_strike": 100.0,
+            "source_long_strike": 100.0,
+        }
+    )
+
+    assert rolled_key == source_key
 
 
 def test_is_debit_sensitive_up_method_trade_uses_method_specific_thresholds() -> None:

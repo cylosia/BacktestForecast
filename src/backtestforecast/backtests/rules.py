@@ -1017,8 +1017,16 @@ def estimate_atm_iv_for_date(
     dte = max((chosen_expiration - trade_date).days, 1)
     current_risk_free_rate = risk_free_rate_resolver(trade_date) if risk_free_rate_resolver is not None else risk_free_rate
     estimates: list[float] = []
+    quotes_by_ticker: dict[str, OptionQuoteRecord | None] | None = None
+    batch_quote_fetch = getattr(option_gateway, "get_quotes", None)
+    if callable(batch_quote_fetch):
+        requested_tickers = [call_contract.ticker, put_contract.ticker]
+        quotes_by_ticker = batch_quote_fetch(requested_tickers, trade_date)
+
     for contract in (call_contract, put_contract):
-        quote = option_gateway.get_quote(contract.ticker, trade_date)
+        quote = None if quotes_by_ticker is None else quotes_by_ticker.get(contract.ticker)
+        if quote is None:
+            quote = option_gateway.get_quote(contract.ticker, trade_date)
         if quote is None:
             continue
         option_price = quote.mid_price

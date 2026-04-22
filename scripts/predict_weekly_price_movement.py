@@ -5,7 +5,7 @@ import json
 import math
 import os
 from collections import Counter, defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from datetime import date, timedelta
 from pathlib import Path
 from statistics import mean, median
@@ -65,6 +65,94 @@ DEFAULT_OPTION_WING_TARGET_MONEYNESS = 0.05
 DEFAULT_ML_CALIBRATION_FRACTION = 0.2
 DEFAULT_MIN_CALIBRATION_SIZE = 40
 _SIGN_LABELS = (-1, 0, 1)
+_BENCHMARK_PRELOAD_CACHE: dict[tuple[str, int, str, str, int, str], list[DailyBar]] = {}
+_DISTANCE_SCALES = (
+    4.0,
+    6.0,
+    8.0,
+    12.0,
+    15.0,
+    20.0,
+    5.0,
+    25.0,
+    1.5,
+    4.0,
+    8.0,
+    15.0,
+    8.0,
+    15.0,
+    1.0,
+    1.0,
+    7.0,
+    5.0,
+    2.5,
+    1.25,
+    1.0,
+    0.6,
+    3.0,
+    1.0,
+    35.0,
+    35.0,
+    10.0,
+    10.0,
+    1.25,
+    1.0,
+    35.0,
+    35.0,
+    10.0,
+    35.0,
+    8.0,
+    35.0,
+    1.5,
+    1.0,
+)
+_DISTANCE_WEIGHTS = (
+    0.8,
+    1.0,
+    1.1,
+    1.2,
+    1.2,
+    0.8,
+    1.0,
+    1.1,
+    0.7,
+    0.6,
+    0.8,
+    0.8,
+    1.0,
+    1.0,
+    0.6,
+    0.5,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+)
+_DISTANCE_ACTIVE_FEATURE_INDICES = tuple(
+    index for index, weight in enumerate(_DISTANCE_WEIGHTS) if weight > 0.0
+)
+_DISTANCE_ACTIVE_FEATURE_COEFFICIENTS = tuple(
+    _DISTANCE_WEIGHTS[index] / _DISTANCE_SCALES[index]
+    for index in _DISTANCE_ACTIVE_FEATURE_INDICES
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,8 +160,11 @@ class AnalogCandidate:
     trade_date: date
     feature_index: int
     features: tuple[float, ...]
+    distance_features: tuple[float, ...]
     forward_return_pct: float
     target_sign: int
+    trend_bucket: int
+    rsi_bucket: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,6 +218,18 @@ class PredictionMethodConfig:
 class FittedMlModel:
     estimator: Any
     calibrator: Any | None = None
+
+
+@dataclass(slots=True)
+class AnalogMethodCache:
+    candidate_pools_by_max_index: dict[int, tuple[AnalogCandidate, ...]] = field(default_factory=dict)
+    ranked_candidates_by_key: dict[tuple[int, bool, int | None, bool, int | None], tuple[AnalogCandidate, ...]] = (
+        field(default_factory=dict)
+    )
+    selected_candidates_by_key: dict[
+        tuple[int, bool, int | None, bool, int | None, int, int],
+        tuple[AnalogCandidate, ...],
+    ] = field(default_factory=dict)
 
 
 _ANALOG_METHOD_CONFIGS: tuple[PredictionMethodConfig, ...] = (
@@ -1106,90 +1209,21 @@ def _build_feature_matrix(
 
 
 def _distance(left: tuple[float, ...], right: tuple[float, ...]) -> float:
-    scales = (
-        4.0,
-        6.0,
-        8.0,
-        12.0,
-        15.0,
-        20.0,
-        5.0,
-        25.0,
-        1.5,
-        4.0,
-        8.0,
-        15.0,
-        8.0,
-        15.0,
-        1.0,
-        1.0,
-        7.0,
-        5.0,
-        2.5,
-        1.25,
-        1.0,
-        0.6,
-        3.0,
-        1.0,
-        35.0,
-        35.0,
-        10.0,
-        10.0,
-        1.25,
-        1.0,
-        35.0,
-        35.0,
-        10.0,
-        35.0,
-        8.0,
-        35.0,
-        1.5,
-        1.0,
+    return _distance_projected(
+        _project_distance_features(left),
+        _project_distance_features(right),
     )
-    weights = (
-        0.8,
-        1.0,
-        1.1,
-        1.2,
-        1.2,
-        0.8,
-        1.0,
-        1.1,
-        0.7,
-        0.6,
-        0.8,
-        0.8,
-        1.0,
-        1.0,
-        0.6,
-        0.5,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
+
+
+def _project_distance_features(features: tuple[float, ...]) -> tuple[float, ...]:
+    return tuple(
+        features[index] * coefficient
+        for index, coefficient in zip(_DISTANCE_ACTIVE_FEATURE_INDICES, _DISTANCE_ACTIVE_FEATURE_COEFFICIENTS, strict=True)
     )
-    return sum(
-        abs((left_value - right_value) / scale) * weight
-        for left_value, right_value, scale, weight in zip(left, right, scales, weights, strict=True)
-    )
+
+
+def _distance_projected(left: tuple[float, ...], right: tuple[float, ...]) -> float:
+    return sum(abs(left_value - right_value) for left_value, right_value in zip(left, right, strict=True))
 
 
 def _trend_bucket(features: tuple[float, ...]) -> int:
@@ -1219,8 +1253,8 @@ def _filter_candidate_pool_for_method(
     filtered_pool = [
         candidate
         for candidate in candidate_pool
-        if (not method.same_trend_bucket or _trend_bucket(candidate.features) == current_trend_bucket)
-        and (not method.same_rsi_bucket or _rsi_bucket(candidate.features) == current_rsi_bucket)
+        if (not method.same_trend_bucket or candidate.trend_bucket == current_trend_bucket)
+        and (not method.same_rsi_bucket or candidate.rsi_bucket == current_rsi_bucket)
     ]
     if len(filtered_pool) >= min_candidate_count:
         return filtered_pool
@@ -1248,10 +1282,137 @@ def _build_analog_candidates(
             trade_date=bars[index].trade_date,
             feature_index=index,
             features=current_features,
+            distance_features=_project_distance_features(current_features),
             forward_return_pct=forward_return_pct,
             target_sign=_sign_from_future_close(current_close=current_close, future_close=future_close),
+            trend_bucket=_trend_bucket(current_features),
+            rsi_bucket=_rsi_bucket(current_features),
         )
     return candidates
+
+
+def _analog_method_cache_key(
+    *,
+    index: int,
+    current_features: tuple[float, ...],
+    method: PredictionMethodConfig,
+) -> tuple[int, bool, int | None, bool, int | None]:
+    return (
+        index,
+        method.same_trend_bucket,
+        _trend_bucket(current_features) if method.same_trend_bucket else None,
+        method.same_rsi_bucket,
+        _rsi_bucket(current_features) if method.same_rsi_bucket else None,
+    )
+
+
+def _get_candidate_pool_for_index(
+    *,
+    candidates: list[AnalogCandidate | None],
+    max_candidate_index: int,
+    cache: AnalogMethodCache | None,
+) -> tuple[AnalogCandidate, ...]:
+    if cache is None:
+        return tuple(candidate for candidate in candidates[: max_candidate_index + 1] if candidate is not None)
+    cached = cache.candidate_pools_by_max_index.get(max_candidate_index)
+    if cached is not None:
+        return cached
+    candidate_pool = tuple(candidate for candidate in candidates[: max_candidate_index + 1] if candidate is not None)
+    cache.candidate_pools_by_max_index[max_candidate_index] = candidate_pool
+    return candidate_pool
+
+
+def _get_ranked_candidates_for_method(
+    *,
+    index: int,
+    current_features: tuple[float, ...],
+    candidates: list[AnalogCandidate | None],
+    horizon_bars: int,
+    min_candidate_count: int,
+    method: PredictionMethodConfig,
+    cache: AnalogMethodCache | None,
+) -> tuple[AnalogCandidate, ...]:
+    cache_key = _analog_method_cache_key(index=index, current_features=current_features, method=method)
+    if cache is not None:
+        cached = cache.ranked_candidates_by_key.get(cache_key)
+        if cached is not None:
+            return cached
+    max_candidate_index = index - horizon_bars
+    if max_candidate_index < 0:
+        return ()
+    candidate_pool = _get_candidate_pool_for_index(
+        candidates=candidates,
+        max_candidate_index=max_candidate_index,
+        cache=cache,
+    )
+    if not candidate_pool:
+        return ()
+    current_distance_features = _project_distance_features(current_features)
+    if not method.same_trend_bucket and not method.same_rsi_bucket:
+        filtered_pool = candidate_pool
+    else:
+        current_trend_bucket = _trend_bucket(current_features)
+        current_rsi_bucket = _rsi_bucket(current_features)
+        filtered_candidates = tuple(
+            candidate
+            for candidate in candidate_pool
+            if (not method.same_trend_bucket or candidate.trend_bucket == current_trend_bucket)
+            and (not method.same_rsi_bucket or candidate.rsi_bucket == current_rsi_bucket)
+        )
+        filtered_pool = filtered_candidates if len(filtered_candidates) >= min_candidate_count else candidate_pool
+    ranked_candidates = tuple(
+        sorted(
+            filtered_pool,
+            key=lambda candidate: (
+                _distance_projected(current_distance_features, candidate.distance_features),
+                candidate.trade_date,
+            ),
+        )
+    )
+    if cache is not None:
+        cache.ranked_candidates_by_key[cache_key] = ranked_candidates
+    return ranked_candidates
+
+
+def _get_selected_analogs_for_method(
+    *,
+    index: int,
+    current_features: tuple[float, ...],
+    candidates: list[AnalogCandidate | None],
+    horizon_bars: int,
+    min_candidate_count: int,
+    min_spacing_bars: int,
+    method: PredictionMethodConfig,
+    cache: AnalogMethodCache | None,
+) -> tuple[AnalogCandidate, ...]:
+    cache_key = _analog_method_cache_key(index=index, current_features=current_features, method=method)
+    selection_cache_key = cache_key + (method.max_analogs, min_spacing_bars)
+    if cache is not None:
+        cached = cache.selected_candidates_by_key.get(selection_cache_key)
+        if cached is not None:
+            return cached
+    ranked_candidates = _get_ranked_candidates_for_method(
+        index=index,
+        current_features=current_features,
+        candidates=candidates,
+        horizon_bars=horizon_bars,
+        min_candidate_count=min_candidate_count,
+        method=method,
+        cache=cache,
+    )
+    if not ranked_candidates:
+        return ()
+    selected: list[AnalogCandidate] = []
+    for candidate in ranked_candidates:
+        if any(abs(candidate.feature_index - item.feature_index) < min_spacing_bars for item in selected):
+            continue
+        selected.append(candidate)
+        if len(selected) >= method.max_analogs:
+            break
+    selected_candidates = tuple(selected if selected else ranked_candidates[: min(method.max_analogs, len(ranked_candidates))])
+    if cache is not None:
+        cache.selected_candidates_by_key[selection_cache_key] = selected_candidates
+    return selected_candidates
 
 
 def _select_analogs(
@@ -1261,9 +1422,13 @@ def _select_analogs(
     max_analogs: int,
     min_spacing_bars: int,
 ) -> list[AnalogCandidate]:
+    current_distance_features = _project_distance_features(current_features)
     ranked = sorted(
         candidate_pool,
-        key=lambda candidate: (_distance(current_features, candidate.features), candidate.trade_date),
+        key=lambda candidate: (
+            _distance_projected(current_distance_features, candidate.distance_features),
+            candidate.trade_date,
+        ),
     )
     if not ranked:
         return []
@@ -1277,6 +1442,76 @@ def _select_analogs(
     if selected:
         return selected
     return ranked[: min(max_analogs, len(ranked))]
+
+
+def _build_analog_prediction_snapshot(
+    *,
+    trade_date: date,
+    current_features: tuple[float, ...],
+    ranked_candidates: list[AnalogCandidate] | tuple[AnalogCandidate, ...],
+    selected: list[AnalogCandidate] | tuple[AnalogCandidate, ...],
+    min_candidate_count: int,
+    method: PredictionMethodConfig,
+) -> PredictionSnapshot | None:
+    if len(ranked_candidates) < min_candidate_count:
+        return None
+    required_analogs = min(method.max_analogs, min_candidate_count)
+    if len(selected) < required_analogs:
+        return None
+    current_distance_features = _project_distance_features(current_features)
+    returns = [candidate.forward_return_pct for candidate in selected]
+    signs = [candidate.target_sign for candidate in selected]
+    sign_counts = Counter(signs)
+    predicted_return_median_pct = float(median(returns))
+    predicted_return_mean_pct = float(mean(returns))
+    probability_by_class: dict[int, float]
+    if method.vote_mode == "median_return":
+        predicted_sign = _sign_from_return_pct(predicted_return_median_pct)
+        total = len(selected)
+        probability_by_class = {
+            label: sign_counts.get(label, 0) / total
+            for label in _SIGN_LABELS
+        }
+    elif method.vote_mode == "weighted_vote":
+        weighted_scores: Counter[int] = Counter()
+        for candidate in selected:
+            distance = _distance_projected(current_distance_features, candidate.distance_features)
+            weighted_scores[candidate.target_sign] += 1.0 / (0.1 + distance)
+        for label in _SIGN_LABELS:
+            weighted_scores.setdefault(label, 0.0)
+        predicted_sign = max(weighted_scores.items(), key=lambda item: (item[1], item[0]))[0]
+        total_weight = sum(weighted_scores.values())
+        probability_by_class = (
+            {
+                label: weighted_scores.get(label, 0.0) / total_weight
+                for label in _SIGN_LABELS
+            }
+            if total_weight > 0
+            else {label: 0.0 for label in _SIGN_LABELS}
+        )
+    else:  # pragma: no cover - protected by static config
+        raise ValueError(f"Unsupported vote mode: {method.vote_mode}")
+    total = len(selected)
+    confidence_pct = probability_by_class.get(predicted_sign, 0.0) * 100.0
+    snapshot = PredictionSnapshot(
+        trade_date=trade_date,
+        predicted_sign=predicted_sign,
+        predicted_return_median_pct=predicted_return_median_pct,
+        predicted_return_mean_pct=predicted_return_mean_pct,
+        candidate_pool_count=len(ranked_candidates),
+        analogs_used=total,
+        up_neighbor_ratio_pct=(sign_counts.get(1, 0) / total) * 100.0,
+        down_neighbor_ratio_pct=(sign_counts.get(-1, 0) / total) * 100.0,
+        flat_neighbor_ratio_pct=(sign_counts.get(0, 0) / total) * 100.0,
+        probability_up_pct=probability_by_class.get(1, 0.0) * 100.0,
+        probability_down_pct=probability_by_class.get(-1, 0.0) * 100.0,
+        probability_flat_pct=probability_by_class.get(0, 0.0) * 100.0,
+        confidence_pct=confidence_pct,
+        analog_dates=tuple(candidate.trade_date for candidate in selected[:5]),
+    )
+    if method.confidence_threshold > 0.0 and confidence_pct < (method.confidence_threshold * 100.0):
+        return None
+    return snapshot
 
 
 def _predict_with_method(
@@ -1302,62 +1537,14 @@ def _predict_with_method(
         max_analogs=method.max_analogs,
         min_spacing_bars=min_spacing_bars,
     )
-    required_analogs = min(method.max_analogs, min_candidate_count)
-    if len(selected) < required_analogs:
-        return None
-    returns = [candidate.forward_return_pct for candidate in selected]
-    signs = [candidate.target_sign for candidate in selected]
-    sign_counts = Counter(signs)
-    predicted_return_median_pct = float(median(returns))
-    predicted_return_mean_pct = float(mean(returns))
-    probability_by_class: dict[int, float]
-    if method.vote_mode == "median_return":
-        predicted_sign = _sign_from_return_pct(predicted_return_median_pct)
-        total = len(selected)
-        probability_by_class = {
-            label: sign_counts.get(label, 0) / total
-            for label in _SIGN_LABELS
-        }
-    elif method.vote_mode == "weighted_vote":
-        weighted_scores: Counter[int] = Counter()
-        for candidate in selected:
-            distance = _distance(current_features, candidate.features)
-            weighted_scores[candidate.target_sign] += 1.0 / (0.1 + distance)
-        for label in _SIGN_LABELS:
-            weighted_scores.setdefault(label, 0.0)
-        predicted_sign = max(weighted_scores.items(), key=lambda item: (item[1], item[0]))[0]
-        total_weight = sum(weighted_scores.values())
-        probability_by_class = (
-            {
-                label: weighted_scores.get(label, 0.0) / total_weight
-                for label in _SIGN_LABELS
-            }
-            if total_weight > 0
-            else {label: 0.0 for label in _SIGN_LABELS}
-        )
-    else:  # pragma: no cover - protected by static config
-        raise ValueError(f"Unsupported vote mode: {method.vote_mode}")
-    total = len(selected)
-    confidence_pct = probability_by_class.get(predicted_sign, 0.0) * 100.0
-    snapshot = PredictionSnapshot(
+    return _build_analog_prediction_snapshot(
         trade_date=trade_date,
-        predicted_sign=predicted_sign,
-        predicted_return_median_pct=predicted_return_median_pct,
-        predicted_return_mean_pct=predicted_return_mean_pct,
-        candidate_pool_count=len(filtered_pool),
-        analogs_used=total,
-        up_neighbor_ratio_pct=(sign_counts.get(1, 0) / total) * 100.0,
-        down_neighbor_ratio_pct=(sign_counts.get(-1, 0) / total) * 100.0,
-        flat_neighbor_ratio_pct=(sign_counts.get(0, 0) / total) * 100.0,
-        probability_up_pct=probability_by_class.get(1, 0.0) * 100.0,
-        probability_down_pct=probability_by_class.get(-1, 0.0) * 100.0,
-        probability_flat_pct=probability_by_class.get(0, 0.0) * 100.0,
-        confidence_pct=confidence_pct,
-        analog_dates=tuple(candidate.trade_date for candidate in selected[:5]),
+        current_features=current_features,
+        ranked_candidates=filtered_pool,
+        selected=selected,
+        min_candidate_count=min_candidate_count,
+        method=method,
     )
-    if method.confidence_threshold > 0.0 and confidence_pct < (method.confidence_threshold * 100.0):
-        return None
-    return snapshot
 
 
 def _predict_from_candidates(
@@ -1411,6 +1598,19 @@ def _resolve_ml_model_name(method: PredictionMethodConfig) -> str:
     if not method.calibration_method:
         return method.ml_model_name
     return f"{method.ml_model_name}_{method.calibration_method}"
+
+
+def _ml_fit_cache_key(
+    method: PredictionMethodConfig,
+) -> tuple[str, str, int, int, float, int]:
+    return (
+        method.ml_model_name,
+        method.calibration_method,
+        method.min_train_size,
+        method.retrain_every_bars,
+        method.calibration_fraction,
+        method.min_calibration_size,
+    )
 
 
 def _predict_probability_by_class(
@@ -1505,6 +1705,35 @@ def _fit_ml_model(
             [1 if label == 1 else 0 for label in calibration_labels],
         )
     return FittedMlModel(estimator=estimator, calibrator=calibrator), len(train_features)
+
+
+def _fit_ml_model_cached(
+    *,
+    bars: list[DailyBar],
+    features: list[tuple[float, ...] | None],
+    horizon_bars: int,
+    train_end_index: int,
+    method: PredictionMethodConfig,
+    fit_cache: dict[tuple[tuple[str, str, int, int, float, int], int], tuple[FittedMlModel, int] | None] | None,
+) -> tuple[FittedMlModel, int] | None:
+    if fit_cache is None:
+        return _fit_ml_model(
+            bars=bars,
+            features=features,
+            horizon_bars=horizon_bars,
+            train_end_index=train_end_index,
+            method=method,
+        )
+    cache_key = (_ml_fit_cache_key(method), train_end_index)
+    if cache_key not in fit_cache:
+        fit_cache[cache_key] = _fit_ml_model(
+            bars=bars,
+            features=features,
+            horizon_bars=horizon_bars,
+            train_end_index=train_end_index,
+            method=method,
+        )
+    return fit_cache[cache_key]
 
 
 def _predict_with_ml_model(
@@ -1642,6 +1871,8 @@ def _walk_forward_predictions(
     min_spacing_bars: int,
     min_candidate_count: int,
     method: PredictionMethodConfig,
+    analog_method_cache: AnalogMethodCache | None = None,
+    ml_fit_cache: dict[tuple[tuple[str, str, int, int, float, int], int], tuple[FittedMlModel, int] | None] | None = None,
 ) -> list[dict[str, object]]:
     results: list[dict[str, object]] = []
     last_scored_index = len(bars) - horizon_bars
@@ -1667,12 +1898,13 @@ def _walk_forward_predictions(
                 or ml_last_fit_index is None
                 or (train_end_index - ml_last_fit_index) >= method.retrain_every_bars
             ):
-                fitted = _fit_ml_model(
+                fitted = _fit_ml_model_cached(
                     bars=bars,
                     features=features,
                     horizon_bars=horizon_bars,
                     train_end_index=train_end_index,
                     method=method,
+                    fit_cache=ml_fit_cache,
                 )
                 if fitted is None:
                     continue
@@ -1691,25 +1923,56 @@ def _walk_forward_predictions(
             max_candidate_index = index - horizon_bars
             if max_candidate_index < 0:
                 continue
-            candidate_pool = [
-                candidate
-                for candidate in candidates[: max_candidate_index + 1]
-                if candidate is not None
-            ]
-            prediction = _predict_from_candidates(
-                trade_date=bar.trade_date,
-                current_features=current_features,
-                candidate_pool=candidate_pool,
-                max_analogs=method.max_analogs,
-                min_spacing_bars=min_spacing_bars,
-                min_candidate_count=min_candidate_count,
-            )
-            if method.vote_mode != "median_return" or method.same_trend_bucket or method.same_rsi_bucket:
-                prediction = _predict_with_method(
+            if analog_method_cache is None:
+                candidate_pool = [
+                    candidate
+                    for candidate in candidates[: max_candidate_index + 1]
+                    if candidate is not None
+                ]
+                prediction = _predict_from_candidates(
                     trade_date=bar.trade_date,
                     current_features=current_features,
                     candidate_pool=candidate_pool,
+                    max_analogs=method.max_analogs,
                     min_spacing_bars=min_spacing_bars,
+                    min_candidate_count=min_candidate_count,
+                )
+                if method.vote_mode != "median_return" or method.same_trend_bucket or method.same_rsi_bucket:
+                    prediction = _predict_with_method(
+                        trade_date=bar.trade_date,
+                        current_features=current_features,
+                        candidate_pool=candidate_pool,
+                        min_spacing_bars=min_spacing_bars,
+                        min_candidate_count=min_candidate_count,
+                        method=method,
+                    )
+            else:
+                ranked_candidates = _get_ranked_candidates_for_method(
+                    index=index,
+                    current_features=current_features,
+                    candidates=candidates,
+                    horizon_bars=horizon_bars,
+                    min_candidate_count=min_candidate_count,
+                    method=method,
+                    cache=analog_method_cache,
+                )
+                if not ranked_candidates:
+                    continue
+                selected = _get_selected_analogs_for_method(
+                    index=index,
+                    current_features=current_features,
+                    candidates=candidates,
+                    horizon_bars=horizon_bars,
+                    min_candidate_count=min_candidate_count,
+                    min_spacing_bars=min_spacing_bars,
+                    method=method,
+                    cache=analog_method_cache,
+                )
+                prediction = _build_analog_prediction_snapshot(
+                    trade_date=bar.trade_date,
+                    current_features=current_features,
+                    ranked_candidates=ranked_candidates,
+                    selected=selected,
                     min_candidate_count=min_candidate_count,
                     method=method,
                 )
@@ -1727,6 +1990,77 @@ def _walk_forward_predictions(
                 prediction_engine=method.engine,
             )
         )
+    return results
+
+
+def _walk_forward_predictions_for_analog_family(
+    *,
+    bars: list[DailyBar],
+    features: list[tuple[float, ...] | None],
+    candidates: list[AnalogCandidate | None],
+    start_date: date,
+    horizon_bars: int,
+    min_spacing_bars: int,
+    min_candidate_count: int,
+    methods: list[PredictionMethodConfig],
+    analog_method_cache: AnalogMethodCache,
+) -> dict[str, list[dict[str, object]]]:
+    if not methods:
+        return {}
+    representative_method = methods[0]
+    results = {method.name: [] for method in methods}
+    last_scored_index = len(bars) - horizon_bars
+    for index in range(last_scored_index):
+        bar = bars[index]
+        if bar.trade_date < start_date:
+            continue
+        current_features = features[index]
+        if current_features is None:
+            continue
+        ranked_candidates = _get_ranked_candidates_for_method(
+            index=index,
+            current_features=current_features,
+            candidates=candidates,
+            horizon_bars=horizon_bars,
+            min_candidate_count=min_candidate_count,
+            method=representative_method,
+            cache=analog_method_cache,
+        )
+        if not ranked_candidates:
+            continue
+        selected = _get_selected_analogs_for_method(
+            index=index,
+            current_features=current_features,
+            candidates=candidates,
+            horizon_bars=horizon_bars,
+            min_candidate_count=min_candidate_count,
+            min_spacing_bars=min_spacing_bars,
+            method=representative_method,
+            cache=analog_method_cache,
+        )
+        future_bar = bars[index + horizon_bars]
+        actual_sign = _sign_from_future_close(current_close=bar.close_price, future_close=future_bar.close_price)
+        actual_return_pct = ((future_bar.close_price - bar.close_price) / bar.close_price) * 100.0
+        for method in methods:
+            prediction = _build_analog_prediction_snapshot(
+                trade_date=bar.trade_date,
+                current_features=current_features,
+                ranked_candidates=ranked_candidates,
+                selected=selected,
+                min_candidate_count=min_candidate_count,
+                method=method,
+            )
+            if prediction is None:
+                continue
+            results[method.name].append(
+                _build_prediction_row(
+                    prediction=prediction,
+                    actual_sign=actual_sign,
+                    future_trade_date=future_bar.trade_date,
+                    actual_return_pct=actual_return_pct,
+                    prediction_engine=method.engine,
+                )
+            )
     return results
 
 
@@ -1913,6 +2247,8 @@ def _build_latest_prediction(
     min_spacing_bars: int,
     min_candidate_count: int,
     method: PredictionMethodConfig,
+    analog_method_cache: AnalogMethodCache | None = None,
+    ml_fit_cache: dict[tuple[tuple[str, str, int, int, float, int], int], tuple[FittedMlModel, int] | None] | None = None,
 ) -> dict[str, object] | None:
     if not bars:
         return None
@@ -1925,12 +2261,13 @@ def _build_latest_prediction(
         train_end_index = latest_index - horizon_bars
         if train_end_index < 0:
             return None
-        fitted = _fit_ml_model(
+        fitted = _fit_ml_model_cached(
             bars=bars,
             features=features,
             horizon_bars=horizon_bars,
             train_end_index=train_end_index,
             method=method,
+            fit_cache=ml_fit_cache,
         )
         if fitted is None:
             return None
@@ -1946,19 +2283,50 @@ def _build_latest_prediction(
         max_candidate_index = latest_index - horizon_bars
         if max_candidate_index < 0:
             return None
-        candidate_pool = [
-            candidate
-            for candidate in candidates[: max_candidate_index + 1]
-            if candidate is not None
-        ]
-        prediction = _predict_with_method(
-            trade_date=bars[latest_index].trade_date,
-            current_features=current_features,
-            candidate_pool=candidate_pool,
-            min_spacing_bars=min_spacing_bars,
-            min_candidate_count=min_candidate_count,
-            method=method,
-        )
+        if analog_method_cache is None:
+            candidate_pool = [
+                candidate
+                for candidate in candidates[: max_candidate_index + 1]
+                if candidate is not None
+            ]
+            prediction = _predict_with_method(
+                trade_date=bars[latest_index].trade_date,
+                current_features=current_features,
+                candidate_pool=candidate_pool,
+                min_spacing_bars=min_spacing_bars,
+                min_candidate_count=min_candidate_count,
+                method=method,
+            )
+        else:
+            ranked_candidates = _get_ranked_candidates_for_method(
+                index=latest_index,
+                current_features=current_features,
+                candidates=candidates,
+                horizon_bars=horizon_bars,
+                min_candidate_count=min_candidate_count,
+                method=method,
+                cache=analog_method_cache,
+            )
+            if not ranked_candidates:
+                return None
+            selected = _get_selected_analogs_for_method(
+                index=latest_index,
+                current_features=current_features,
+                candidates=candidates,
+                horizon_bars=horizon_bars,
+                min_candidate_count=min_candidate_count,
+                min_spacing_bars=min_spacing_bars,
+                method=method,
+                cache=analog_method_cache,
+            )
+            prediction = _build_analog_prediction_snapshot(
+                trade_date=bars[latest_index].trade_date,
+                current_features=current_features,
+                ranked_candidates=ranked_candidates,
+                selected=selected,
+                min_candidate_count=min_candidate_count,
+                method=method,
+            )
     if prediction is None:
         return None
     return _build_latest_prediction_payload(prediction, prediction_engine=method.engine)
@@ -1980,6 +2348,9 @@ def _build_payload(
     min_candidate_count: int,
     min_spacing_bars: int,
     selected_total_scorable_dates: int,
+    requested_prediction_method: str,
+    requested_max_analogs: int | None,
+    warmup_calendar_days: int,
 ) -> dict[str, object]:
     filtered_bars = [bar for bar in bars if start_date <= bar.trade_date <= end_date]
     return {
@@ -1992,12 +2363,15 @@ def _build_payload(
             "min_candidate_count": min_candidate_count,
             "min_spacing_bars": min_spacing_bars,
             "prediction_method": selected_method_name,
+            "requested_prediction_method": requested_prediction_method,
+            "requested_max_analogs": requested_max_analogs,
             "ml_model_name": selected_method.ml_model_name or None,
             "ml_confidence_threshold": (
                 selected_method.confidence_threshold if selected_method.engine == "ml" else None
             ),
             "ml_min_train_size": selected_method.min_train_size if selected_method.engine == "ml" else None,
             "ml_retrain_every_bars": selected_method.retrain_every_bars if selected_method.engine == "ml" else None,
+            "warmup_calendar_days": warmup_calendar_days,
         },
         "selected_method": selected_method_name,
         "selected_method_reason": selected_method_reason,
@@ -2019,66 +2393,169 @@ def _build_payload(
     }
 
 
-def main() -> int:
-    args = build_parser().parse_args()
-    if not args.database_url:
-        raise SystemExit("DATABASE_URL is required. Provide --database-url or export DATABASE_URL.")
-    if args.horizon_bars < 1:
-        raise SystemExit("--horizon-bars must be >= 1.")
-    if args.max_analogs is not None and args.max_analogs < 1:
-        raise SystemExit("--max-analogs must be >= 1.")
-    if args.min_candidate_count < 1:
-        raise SystemExit("--min-candidate-count must be >= 1.")
-    if args.min_spacing_bars < 1:
-        raise SystemExit("--min-spacing-bars must be >= 1.")
-    if args.warmup_calendar_days < 0:
-        raise SystemExit("--warmup-calendar-days must be >= 0.")
-    if args.start_date >= args.end_date:
-        raise SystemExit("--start-date must be earlier than --end-date.")
+def _benchmark_preload_cache_key(
+    *,
+    database_url: str,
+    db_statement_timeout_ms: int,
+    start_date: date,
+    end_date: date,
+    warmup_calendar_days: int,
+    benchmark_symbol: str = DEFAULT_BENCHMARK_SYMBOL,
+) -> tuple[str, int, str, str, int, str]:
+    return (
+        database_url,
+        db_statement_timeout_ms,
+        start_date.isoformat(),
+        end_date.isoformat(),
+        warmup_calendar_days,
+        benchmark_symbol.strip().upper(),
+    )
 
-    symbol = args.symbol.strip().upper()
-    engine = build_engine(database_url=args.database_url, statement_timeout_ms=args.db_statement_timeout_ms)
+
+def clear_preloaded_benchmark_bars() -> None:
+    _BENCHMARK_PRELOAD_CACHE.clear()
+
+
+def preload_benchmark_bars(
+    *,
+    database_url: str,
+    db_statement_timeout_ms: int,
+    start_date: date,
+    end_date: date,
+    warmup_calendar_days: int,
+    benchmark_symbol: str = DEFAULT_BENCHMARK_SYMBOL,
+) -> list[DailyBar]:
+    cache_key = _benchmark_preload_cache_key(
+        database_url=database_url,
+        db_statement_timeout_ms=db_statement_timeout_ms,
+        start_date=start_date,
+        end_date=end_date,
+        warmup_calendar_days=warmup_calendar_days,
+        benchmark_symbol=benchmark_symbol,
+    )
+    cached = _BENCHMARK_PRELOAD_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+    engine = build_engine(database_url=database_url, statement_timeout_ms=db_statement_timeout_ms)
     try:
         factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False, class_=Session)
         with factory() as session:
             bars = _load_bars(
                 session,
-                symbol=symbol,
-                start_date=args.start_date,
-                end_date=args.end_date,
-                warmup_calendar_days=args.warmup_calendar_days,
+                symbol=benchmark_symbol.strip().upper(),
+                start_date=start_date,
+                end_date=end_date,
+                warmup_calendar_days=warmup_calendar_days,
+            )
+    finally:
+        engine.dispose()
+    _BENCHMARK_PRELOAD_CACHE[cache_key] = bars
+    return bars
+
+
+def _get_preloaded_benchmark_bars(
+    *,
+    database_url: str,
+    db_statement_timeout_ms: int,
+    start_date: date,
+    end_date: date,
+    warmup_calendar_days: int,
+    benchmark_symbol: str = DEFAULT_BENCHMARK_SYMBOL,
+) -> list[DailyBar] | None:
+    cache_key = _benchmark_preload_cache_key(
+        database_url=database_url,
+        db_statement_timeout_ms=db_statement_timeout_ms,
+        start_date=start_date,
+        end_date=end_date,
+        warmup_calendar_days=warmup_calendar_days,
+        benchmark_symbol=benchmark_symbol,
+    )
+    return _BENCHMARK_PRELOAD_CACHE.get(cache_key)
+
+
+def evaluate_symbol_to_payload(
+    *,
+    symbol: str,
+    database_url: str,
+    db_statement_timeout_ms: int,
+    start_date: date,
+    end_date: date,
+    horizon_bars: int,
+    max_analogs: int | None,
+    min_candidate_count: int,
+    min_spacing_bars: int,
+    warmup_calendar_days: int,
+    prediction_method: str,
+    preloaded_benchmark_bars: list[DailyBar] | None = None,
+) -> dict[str, object]:
+    if not database_url:
+        raise SystemExit("DATABASE_URL is required. Provide --database-url or export DATABASE_URL.")
+    if horizon_bars < 1:
+        raise SystemExit("--horizon-bars must be >= 1.")
+    if max_analogs is not None and max_analogs < 1:
+        raise SystemExit("--max-analogs must be >= 1.")
+    if min_candidate_count < 1:
+        raise SystemExit("--min-candidate-count must be >= 1.")
+    if min_spacing_bars < 1:
+        raise SystemExit("--min-spacing-bars must be >= 1.")
+    if warmup_calendar_days < 0:
+        raise SystemExit("--warmup-calendar-days must be >= 0.")
+    if start_date >= end_date:
+        raise SystemExit("--start-date must be earlier than --end-date.")
+
+    normalized_symbol = symbol.strip().upper()
+    engine = build_engine(database_url=database_url, statement_timeout_ms=db_statement_timeout_ms)
+    try:
+        factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False, class_=Session)
+        with factory() as session:
+            bars = _load_bars(
+                session,
+                symbol=normalized_symbol,
+                start_date=start_date,
+                end_date=end_date,
+                warmup_calendar_days=warmup_calendar_days,
             )
             option_feature_rows = _load_option_feature_rows(
                 session,
-                symbol=symbol,
-                start_date=args.start_date,
-                end_date=args.end_date,
-                warmup_calendar_days=args.warmup_calendar_days,
+                symbol=normalized_symbol,
+                start_date=start_date,
+                end_date=end_date,
+                warmup_calendar_days=warmup_calendar_days,
             )
             benchmark_bars = (
                 bars
-                if symbol == DEFAULT_BENCHMARK_SYMBOL
-                else _load_bars(
-                    session,
-                    symbol=DEFAULT_BENCHMARK_SYMBOL,
-                    start_date=args.start_date,
-                    end_date=args.end_date,
-                    warmup_calendar_days=args.warmup_calendar_days,
+                if normalized_symbol == DEFAULT_BENCHMARK_SYMBOL
+                else (
+                    preloaded_benchmark_bars
+                    or _get_preloaded_benchmark_bars(
+                        database_url=database_url,
+                        db_statement_timeout_ms=db_statement_timeout_ms,
+                        start_date=start_date,
+                        end_date=end_date,
+                        warmup_calendar_days=warmup_calendar_days,
+                    )
+                    or _load_bars(
+                        session,
+                        symbol=DEFAULT_BENCHMARK_SYMBOL,
+                        start_date=start_date,
+                        end_date=end_date,
+                        warmup_calendar_days=warmup_calendar_days,
+                    )
                 )
             )
             earnings_dates = _load_earnings_dates(
                 session,
-                symbol=symbol,
-                start_date=args.start_date,
-                end_date=args.end_date,
+                symbol=normalized_symbol,
+                start_date=start_date,
+                end_date=end_date,
             )
         store = HistoricalMarketDataStore(factory, factory)
-        option_gateway = HistoricalOptionGateway(store, symbol)
+        option_gateway = HistoricalOptionGateway(store, normalized_symbol)
     finally:
         engine.dispose()
 
     if len(bars) < 80:
-        raise SystemExit(f"Not enough bars for {symbol}. Loaded {len(bars)} rows; need at least 80.")
+        raise SystemExit(f"Not enough bars for {normalized_symbol}. Loaded {len(bars)} rows; need at least 80.")
 
     benchmark_context_by_date = _build_benchmark_context_by_date(benchmark_bars)
     front_iv_series = build_estimated_iv_series(
@@ -2110,7 +2587,7 @@ def main() -> int:
         option_context_by_date=option_context_by_date,
         iv_context_by_date=iv_context_by_date,
     )
-    candidates = _build_analog_candidates(bars=bars, features=features, horizon_bars=args.horizon_bars)
+    candidates = _build_analog_candidates(bars=bars, features=features, horizon_bars=horizon_bars)
     configured_methods = tuple(
         PredictionMethodConfig(
             name=method.name,
@@ -2118,8 +2595,8 @@ def main() -> int:
             engine=method.engine,
             max_analogs=(
                 method.max_analogs
-                if args.max_analogs is None or method.engine != "analog"
-                else args.max_analogs
+                if max_analogs is None or method.engine != "analog"
+                else max_analogs
             ),
             same_trend_bucket=method.same_trend_bucket,
             same_rsi_bucket=method.same_rsi_bucket,
@@ -2136,50 +2613,92 @@ def main() -> int:
     method_name_to_config = {method.name: method for method in configured_methods}
     candidate_methods = (
         configured_methods
-        if args.prediction_method == DEFAULT_PREDICTION_METHOD
-        else (method_name_to_config[args.prediction_method],)
+        if prediction_method == DEFAULT_PREDICTION_METHOD
+        else (method_name_to_config[prediction_method],)
     )
-    total_scorable_dates_by_method = {
-        method.name: (
+    analog_total_scorable_dates = _count_total_scorable_dates(
+        bars=bars,
+        features=features,
+        candidates=candidates,
+        start_date=start_date,
+        horizon_bars=horizon_bars,
+        min_candidate_count=min_candidate_count,
+    )
+    ml_total_scorable_dates_by_min_train_size: dict[int, int] = {}
+    total_scorable_dates_by_method = {}
+    for method in candidate_methods:
+        if method.engine != "ml":
+            total_scorable_dates_by_method[method.name] = analog_total_scorable_dates
+            continue
+        ml_total_scorable_dates_by_min_train_size.setdefault(
+            method.min_train_size,
             _count_total_ml_scorable_dates(
                 bars=bars,
                 features=features,
-                start_date=args.start_date,
-                horizon_bars=args.horizon_bars,
+                start_date=start_date,
+                horizon_bars=horizon_bars,
                 min_train_size=method.min_train_size,
-            )
-            if method.engine == "ml"
-            else _count_total_scorable_dates(
-                bars=bars,
-                features=features,
-                candidates=candidates,
-                start_date=args.start_date,
-                horizon_bars=args.horizon_bars,
-                min_candidate_count=args.min_candidate_count,
-            )
+            ),
         )
-        for method in candidate_methods
-    }
-    method_rows = {
-        method.name: _walk_forward_predictions(
+        total_scorable_dates_by_method[method.name] = ml_total_scorable_dates_by_min_train_size[method.min_train_size]
+    analog_method_cache = AnalogMethodCache()
+    ml_fit_cache: dict[tuple[tuple[str, str, int, int, float, int], int], tuple[FittedMlModel, int] | None] = {}
+    method_rows: dict[str, list[dict[str, object]]] = {}
+    analog_methods = [method for method in candidate_methods if method.engine != "ml"]
+    ml_methods = [method for method in candidate_methods if method.engine == "ml"]
+    analog_methods_by_family: dict[tuple[int, bool, bool], list[PredictionMethodConfig]] = {}
+    for method in analog_methods:
+        analog_methods_by_family.setdefault(
+            (method.max_analogs, method.same_trend_bucket, method.same_rsi_bucket),
+            [],
+        ).append(method)
+    for family_methods in analog_methods_by_family.values():
+        family_rows = _walk_forward_predictions_for_analog_family(
             bars=bars,
             features=features,
             candidates=candidates,
-            start_date=args.start_date,
-            horizon_bars=args.horizon_bars,
-            min_spacing_bars=args.min_spacing_bars,
-            min_candidate_count=args.min_candidate_count,
-            method=method,
+            start_date=start_date,
+            horizon_bars=horizon_bars,
+            min_spacing_bars=min_spacing_bars,
+            min_candidate_count=min_candidate_count,
+            methods=family_methods,
+            analog_method_cache=analog_method_cache,
         )
-        for method in candidate_methods
-    }
+        method_rows.update(family_rows)
+    ml_methods_by_family: dict[tuple[str, str, int, int, float, int], list[PredictionMethodConfig]] = {}
+    for method in ml_methods:
+        ml_methods_by_family.setdefault(_ml_fit_cache_key(method), []).append(method)
+    for family_methods in ml_methods_by_family.values():
+        representative_method = replace(family_methods[0], confidence_threshold=0.0)
+        family_rows = _walk_forward_predictions(
+            bars=bars,
+            features=features,
+            candidates=candidates,
+            start_date=start_date,
+            horizon_bars=horizon_bars,
+            min_spacing_bars=min_spacing_bars,
+            min_candidate_count=min_candidate_count,
+            method=representative_method,
+            analog_method_cache=None,
+            ml_fit_cache=ml_fit_cache,
+        )
+        for method in family_methods:
+            if method.confidence_threshold <= 0.0:
+                method_rows[method.name] = family_rows
+                continue
+            threshold_pct = method.confidence_threshold * 100.0
+            method_rows[method.name] = [
+                row
+                for row in family_rows
+                if row["confidence_pct"] is not None and float(row["confidence_pct"]) >= threshold_pct
+            ]
     selected_method_name = (
         _select_best_method_name(
             method_rows,
             total_scorable_dates_by_method=total_scorable_dates_by_method,
         )
-        if args.prediction_method == DEFAULT_PREDICTION_METHOD
-        else args.prediction_method
+        if prediction_method == DEFAULT_PREDICTION_METHOD
+        else prediction_method
     )
     walk_forward_rows = method_rows[selected_method_name]
     if not walk_forward_rows:
@@ -2190,7 +2709,7 @@ def main() -> int:
     selected_method = method_name_to_config[selected_method_name]
     selected_method_reason = (
         "best_accuracy_full_window"
-        if args.prediction_method == DEFAULT_PREDICTION_METHOD
+        if prediction_method == DEFAULT_PREDICTION_METHOD
         else "explicit"
     )
     method_summaries = _summarize_method_rows(
@@ -2202,15 +2721,17 @@ def main() -> int:
         bars=bars,
         features=features,
         candidates=candidates,
-        horizon_bars=args.horizon_bars,
-        min_spacing_bars=args.min_spacing_bars,
-        min_candidate_count=args.min_candidate_count,
+        horizon_bars=horizon_bars,
+        min_spacing_bars=min_spacing_bars,
+        min_candidate_count=min_candidate_count,
         method=selected_method,
+        analog_method_cache=analog_method_cache if selected_method.engine != "ml" else None,
+        ml_fit_cache=ml_fit_cache if selected_method.engine == "ml" else None,
     )
-    payload = _build_payload(
-        symbol=symbol,
-        start_date=args.start_date,
-        end_date=args.end_date,
+    return _build_payload(
+        symbol=normalized_symbol,
+        start_date=start_date,
+        end_date=end_date,
         bars=bars,
         walk_forward_rows=walk_forward_rows,
         method_summaries=method_summaries,
@@ -2218,14 +2739,34 @@ def main() -> int:
         selected_method_reason=selected_method_reason,
         selected_method=selected_method,
         latest_prediction=latest_prediction,
+        horizon_bars=horizon_bars,
+        min_candidate_count=min_candidate_count,
+        min_spacing_bars=min_spacing_bars,
+        selected_total_scorable_dates=total_scorable_dates_by_method[selected_method_name],
+        requested_prediction_method=prediction_method,
+        requested_max_analogs=max_analogs,
+        warmup_calendar_days=warmup_calendar_days,
+    )
+
+
+def main() -> int:
+    args = build_parser().parse_args()
+    payload = evaluate_symbol_to_payload(
+        symbol=args.symbol,
+        database_url=args.database_url,
+        db_statement_timeout_ms=args.db_statement_timeout_ms,
+        start_date=args.start_date,
+        end_date=args.end_date,
         horizon_bars=args.horizon_bars,
+        max_analogs=args.max_analogs,
         min_candidate_count=args.min_candidate_count,
         min_spacing_bars=args.min_spacing_bars,
-        selected_total_scorable_dates=total_scorable_dates_by_method[selected_method_name],
+        warmup_calendar_days=args.warmup_calendar_days,
+        prediction_method=args.prediction_method,
     )
 
     output_json = args.output_json or _default_output_path(
-        symbol=symbol,
+        symbol=str(payload["symbol"]),
         start_date=args.start_date,
         end_date=args.end_date,
         horizon_bars=args.horizon_bars,
@@ -2234,6 +2775,7 @@ def main() -> int:
     output_json.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
 
     print(json.dumps(payload["evaluation"], indent=2, sort_keys=True))
+    latest_prediction = payload.get("latest_prediction")
     if latest_prediction is not None:
         print(json.dumps(latest_prediction, indent=2, sort_keys=True))
     print(f"Wrote {output_json}")

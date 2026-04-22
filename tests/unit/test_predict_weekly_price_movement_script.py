@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
+from pathlib import Path
 
 import pytest
 
@@ -349,6 +350,33 @@ def test_evaluation_summary_includes_balanced_accuracy_and_confusion_matrix() ->
     assert summary["confusion_matrix"]["-1"]["1"] == 1
 
 
+def test_build_payload_records_cache_sensitive_request_parameters() -> None:
+    bars = _make_bars(count=40)
+    payload = script._build_payload(
+        symbol="AAPL",
+        start_date=bars[10].trade_date,
+        end_date=bars[-1].trade_date,
+        bars=bars,
+        walk_forward_rows=[{"predicted_sign": 1, "actual_sign": 1}],
+        method_summaries={"median20": {"accuracy_pct": 60.0}},
+        selected_method_name="median20",
+        selected_method_reason="best_accuracy_full_window",
+        selected_method=script.PredictionMethodConfig(name="median20", vote_mode="median_return", max_analogs=20),
+        latest_prediction=None,
+        horizon_bars=5,
+        min_candidate_count=60,
+        min_spacing_bars=5,
+        selected_total_scorable_dates=10,
+        requested_prediction_method="auto",
+        requested_max_analogs=30,
+        warmup_calendar_days=120,
+    )
+
+    assert payload["parameters"]["requested_prediction_method"] == "auto"
+    assert payload["parameters"]["requested_max_analogs"] == 30
+    assert payload["parameters"]["warmup_calendar_days"] == 120
+
+
 def test_select_best_method_name_prefers_accuracy_then_balanced_accuracy() -> None:
     selected = script._select_best_method_name(
         {
@@ -515,3 +543,189 @@ def test_walk_forward_predictions_with_calibrated_ml_method_use_calibrated_proba
     assert first_row["probability_up_pct"] is not None
     assert first_row["probability_down_pct"] is not None
     assert float(first_row["probability_up_pct"]) + float(first_row["probability_down_pct"]) == pytest.approx(100.0)
+
+
+def test_fit_ml_model_cached_reuses_family_fit_across_threshold_variants(monkeypatch: pytest.MonkeyPatch) -> None:
+    fit_calls = 0
+    fitted_model = (script.FittedMlModel(estimator=object()), 123)
+
+    def fake_fit_ml_model(**_: object) -> tuple[script.FittedMlModel, int]:
+        nonlocal fit_calls
+        fit_calls += 1
+        return fitted_model
+
+    monkeypatch.setattr(script, "_fit_ml_model", fake_fit_ml_model)
+
+    method68 = script.PredictionMethodConfig(
+        name="mlgb68",
+        vote_mode="ml_classifier",
+        engine="ml",
+        ml_model_name="gradient_boosting",
+        confidence_threshold=0.68,
+        min_train_size=120,
+        retrain_every_bars=20,
+    )
+    method72 = script.PredictionMethodConfig(
+        name="mlgb72",
+        vote_mode="ml_classifier",
+        engine="ml",
+        ml_model_name="gradient_boosting",
+        confidence_threshold=0.72,
+        min_train_size=120,
+        retrain_every_bars=20,
+    )
+    cache: dict[tuple[tuple[str, str, int, int, float, int], int], tuple[script.FittedMlModel, int] | None] = {}
+
+    first = script._fit_ml_model_cached(
+        bars=[],
+        features=[],
+        horizon_bars=5,
+        train_end_index=140,
+        method=method68,
+        fit_cache=cache,
+    )
+    second = script._fit_ml_model_cached(
+        bars=[],
+        features=[],
+        horizon_bars=5,
+        train_end_index=140,
+        method=method72,
+        fit_cache=cache,
+    )
+
+    assert fit_calls == 1
+    assert first == second == fitted_model
+
+
+def test_analog_method_cache_reuses_ranked_candidates_across_vote_modes(monkeypatch: pytest.MonkeyPatch) -> None:
+    bars = _make_bars(count=260, daily_delta=0.25, volatility_wave=0.03)
+    features = script._build_feature_matrix(bars)
+    candidates = script._build_analog_candidates(bars=bars, features=features, horizon_bars=5)
+    cache = script.AnalogMethodCache()
+    distance_calls = 0
+    original_distance = script._distance
+
+    def counting_distance(left: tuple[float, ...], right: tuple[float, ...]) -> float:
+        nonlocal distance_calls
+        distance_calls += 1
+        return original_distance(left, right)
+
+    monkeypatch.setattr(script, "_distance", counting_distance)
+
+    index = 120
+    current_features = features[index]
+    assert current_features is not None
+
+    ranked_median = script._get_ranked_candidates_for_method(
+        index=index,
+        current_features=current_features,
+        candidates=candidates,
+        horizon_bars=5,
+        min_candidate_count=20,
+        method=script.PredictionMethodConfig(name="median20", vote_mode="median_return", max_analogs=20),
+        cache=cache,
+    )
+    median_distance_calls = distance_calls
+    ranked_vote = script._get_ranked_candidates_for_method(
+        index=index,
+        current_features=current_features,
+        candidates=candidates,
+        horizon_bars=5,
+        min_candidate_count=20,
+        method=script.PredictionMethodConfig(name="vote20", vote_mode="weighted_vote", max_analogs=20),
+        cache=cache,
+    )
+
+    assert ranked_median
+    assert ranked_vote == ranked_median
+    assert distance_calls == median_distance_calls
+
+
+def test_walk_forward_predictions_for_analog_family_matches_individual_methods() -> None:
+    bars = _make_regime_bars()
+    features = script._build_feature_matrix(bars)
+    candidates = script._build_analog_candidates(bars=bars, features=features, horizon_bars=5)
+    cache = script.AnalogMethodCache()
+    median_method = script.PredictionMethodConfig(name="median20", vote_mode="median_return", max_analogs=20)
+    vote_method = script.PredictionMethodConfig(name="vote20", vote_mode="weighted_vote", max_analogs=20)
+
+    individual_median = script._walk_forward_predictions(
+        bars=bars,
+        features=features,
+        candidates=candidates,
+        start_date=bars[80].trade_date,
+        horizon_bars=5,
+        min_spacing_bars=5,
+        min_candidate_count=20,
+        method=median_method,
+        analog_method_cache=cache,
+    )
+    individual_vote = script._walk_forward_predictions(
+        bars=bars,
+        features=features,
+        candidates=candidates,
+        start_date=bars[80].trade_date,
+        horizon_bars=5,
+        min_spacing_bars=5,
+        min_candidate_count=20,
+        method=vote_method,
+        analog_method_cache=cache,
+    )
+
+    family_rows = script._walk_forward_predictions_for_analog_family(
+        bars=bars,
+        features=features,
+        candidates=candidates,
+        start_date=bars[80].trade_date,
+        horizon_bars=5,
+        min_spacing_bars=5,
+        min_candidate_count=20,
+        methods=[median_method, vote_method],
+        analog_method_cache=script.AnalogMethodCache(),
+    )
+
+    assert family_rows["median20"] == individual_median
+    assert family_rows["vote20"] == individual_vote
+
+
+def test_main_uses_payload_latest_prediction_without_name_error(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    output_json = Path("logs/test_main_weekly.json")
+    output_json.unlink(missing_ok=True)
+
+    class _Parser:
+        def parse_args(self) -> object:
+            return type(
+                "Args",
+                (),
+                {
+                    "symbol": "AAPL",
+                    "database_url": "sqlite://",
+                    "db_statement_timeout_ms": 30_000,
+                    "start_date": date(2024, 1, 1),
+                    "end_date": date(2024, 12, 31),
+                    "horizon_bars": 5,
+                    "max_analogs": None,
+                    "min_candidate_count": 60,
+                    "min_spacing_bars": 5,
+                    "warmup_calendar_days": 120,
+                    "prediction_method": "auto",
+                    "output_json": output_json,
+                },
+            )()
+
+    payload = {
+        "symbol": "AAPL",
+        "evaluation": {"accuracy_pct": 60.0},
+        "latest_prediction": {"as_of_date": "2024-12-31", "predicted_sign": 1},
+    }
+    monkeypatch.setattr(script, "build_parser", lambda: _Parser())
+    monkeypatch.setattr(script, "evaluate_symbol_to_payload", lambda **_: payload)
+
+    assert script.main() == 0
+    assert output_json.exists()
+    captured = capsys.readouterr()
+    assert "\"predicted_sign\": 1" in captured.out
+    output_json.unlink(missing_ok=True)

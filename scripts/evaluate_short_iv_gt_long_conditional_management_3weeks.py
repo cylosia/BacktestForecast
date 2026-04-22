@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import math
 import sys
 from collections import defaultdict, deque
 from datetime import date, timedelta
@@ -9,7 +10,7 @@ from pathlib import Path
 from statistics import mean, median
 from typing import Callable
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -18,6 +19,7 @@ if str(ROOT) not in sys.path:
 
 from backtestforecast.market_data.historical_store import HistoricalMarketDataStore
 from backtestforecast.market_data import vix_regime
+from backtestforecast.models import HistoricalOptionDayBar
 
 import scripts.compare_short_iv_gt_long_management_rules_3weeks as mgmt
 import scripts.evaluate_short_iv_gt_long_calendar_take_profit_grid as tp_grid
@@ -129,6 +131,10 @@ BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN3_WORST_METHOD_SKIP_METHOD_CAP12_P25_NO
 BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN5_WORST_METHOD_SKIP_METHOD_CAP12_POLICY_LABEL = (
     f"{BEST_COMBINED_WORST_METHOD_SKIP_POLICY_LABEL}__top43_52w_symbol_median_roi_min5__method_cap12"
 )
+BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN3_WORST_METHOD_SKIP_METHOD_CAP12_PNL_OVER_DEBIT_15_MIN5_POLICY_LABEL = (
+    f"{BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN3_WORST_METHOD_SKIP_METHOD_CAP12_POLICY_LABEL}"
+    "__pnl_over_debit_15_min5"
+)
 BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN3_WORST_METHOD_SKIP_VIX_ABS_GT_10_HALF_SIZE_POLICY_LABEL = (
     f"{BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN3_WORST_METHOD_SKIP_POLICY_LABEL}"
     "__vix_abs_weekly_change_gt_10_half_size"
@@ -141,6 +147,26 @@ BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN3_WORST_METHOD_SKIP_METHOD_CAP12_WEEKLY
     f"{BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN3_WORST_METHOD_SKIP_METHOD_CAP12_POLICY_LABEL}"
     "__weekly_debit_budget_40"
 )
+BEST_COMBINED_TOP43_SYMBOL_LOWEST_DRAWDOWN_PCT_MIN3_WORST_METHOD_SKIP_METHOD_CAP12_POLICY_LABEL = (
+    f"{BEST_COMBINED_WORST_METHOD_SKIP_POLICY_LABEL}__top43_52w_symbol_lowest_drawdown_pct_min3__method_cap12"
+)
+BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MINUS_DRAWDOWN_PCT_MIN3_WORST_METHOD_SKIP_METHOD_CAP12_POLICY_LABEL = (
+    f"{BEST_COMBINED_WORST_METHOD_SKIP_POLICY_LABEL}"
+    "__top43_52w_symbol_median_roi_minus_drawdown_pct_min3__method_cap12"
+)
+BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_PLUS_P25_MIN3_WORST_METHOD_SKIP_METHOD_CAP12_POLICY_LABEL = (
+    f"{BEST_COMBINED_WORST_METHOD_SKIP_POLICY_LABEL}__top43_52w_symbol_median_roi_plus_p25_min3__method_cap12"
+)
+BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MINUS_CVAR10_LOSS_MIN3_WORST_METHOD_SKIP_METHOD_CAP12_POLICY_LABEL = (
+    f"{BEST_COMBINED_WORST_METHOD_SKIP_POLICY_LABEL}"
+    "__top43_52w_symbol_median_roi_minus_cvar10_loss_min3__method_cap12"
+)
+BEST_COMBINED_TOP43_SYMBOL_PROFIT_FACTOR_GUARDED_MIN3_WORST_METHOD_SKIP_METHOD_CAP12_POLICY_LABEL = (
+    f"{BEST_COMBINED_WORST_METHOD_SKIP_POLICY_LABEL}__top43_52w_symbol_profit_factor_guarded_min3__method_cap12"
+)
+BEST_COMBINED_TOP43_SYMBOL_SORTINO_GUARDED_MIN3_WORST_METHOD_SKIP_METHOD_CAP12_POLICY_LABEL = (
+    f"{BEST_COMBINED_WORST_METHOD_SKIP_POLICY_LABEL}__top43_52w_symbol_sortino_guarded_min3__method_cap12"
+)
 BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN3_ABSTAIN_CAP29_POLICY_LABEL = (
     f"{BEST_COMBINED_METHOD_SIDE_EXIT_POLICY_LABEL}__top43_52w_symbol_median_roi_min3__abstain_cap29"
 )
@@ -152,11 +178,83 @@ BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MINUS_NEGATIVE_P25_MIN3_POLICY_LABEL = (
 BEST_COMBINED_POLICY_LABEL = BEST_COMBINED_METHOD_SIDE_EXIT_POLICY_LABEL
 # Preferred ranked/capped portfolio variant after drawdown comparison.
 BEST_COMBINED_PORTFOLIO_POLICY_LABEL = (
-    BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN3_WORST_METHOD_SKIP_METHOD_CAP12_POLICY_LABEL
+    BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN3_WORST_METHOD_SKIP_METHOD_CAP12_PNL_OVER_DEBIT_15_MIN5_POLICY_LABEL
 )
 BEST_COMBINED_PORTFOLIO_LIVE_POLICY_LABEL = f"{BEST_COMBINED_PORTFOLIO_POLICY_LABEL}_live"
+MLGBP72_ABSTAIN_FIRST_BREACH_POLICY_LABEL = "abstain_mlgbp72_first_breach_exit"
+MLGBP72_ABSTAIN_LAST_PRE_EXPIRATION_NEGATIVE_POLICY_LABEL = (
+    "abstain_mlgbp72_last_pre_expiration_negative_exit"
+)
+MLGBP72_ABSTAIN_ROLL_FORWARD_ONE_WEEK_UP1_POLICY_LABEL = (
+    "abstain_mlgbp72_roll_forward_one_week_up1"
+)
+MLGBP72_ABSTAIN_ROLL_FORWARD_ONE_WEEK_UP2_POLICY_LABEL = (
+    "abstain_mlgbp72_roll_forward_one_week_up2"
+)
+MLGBP72_ABSTAIN_ROLL_SAME_WEEK_ATM_POLICY_LABEL = (
+    "abstain_mlgbp72_roll_same_week_atm"
+)
+MLGBP72_ABSTAIN_ROLL_BOTH_LEGS_SAME_WEEK_ATM_POLICY_LABEL = (
+    "abstain_mlgbp72_roll_both_legs_same_week_atm"
+)
+MLGBP72_ABSTAIN_TWO_SIDED_BUTTERFLY_POLICY_LABEL = (
+    "abstain_mlgbp72_two_sided_call_put_butterfly"
+)
+MLGBP72_ABSTAIN_TWO_SIDED_BUTTERFLY_W2_POLICY_LABEL = (
+    "abstain_mlgbp72_two_sided_call_put_butterfly_w2"
+)
+MLGBP72_ABSTAIN_TWO_SIDED_BUTTERFLY_W3_POLICY_LABEL = (
+    "abstain_mlgbp72_two_sided_call_put_butterfly_w3"
+)
+BEST_COMBINED_PORTFOLIO_MLGBP72_ABSTAIN_FIRST_BREACH_POLICY_LABEL = (
+    f"{BEST_COMBINED_PORTFOLIO_POLICY_LABEL}__mlgbp72_abstain_first_breach"
+)
+BEST_COMBINED_PORTFOLIO_MLGBP72_ABSTAIN_LAST_PRE_EXPIRATION_NEGATIVE_POLICY_LABEL = (
+    f"{BEST_COMBINED_PORTFOLIO_POLICY_LABEL}__mlgbp72_abstain_last_pre_expiration_negative"
+)
+BEST_COMBINED_PORTFOLIO_MLGBP72_ABSTAIN_ROLL_FORWARD_ONE_WEEK_UP1_POLICY_LABEL = (
+    f"{BEST_COMBINED_PORTFOLIO_POLICY_LABEL}__mlgbp72_abstain_roll_forward_one_week_up1"
+)
+BEST_COMBINED_PORTFOLIO_MLGBP72_ABSTAIN_ROLL_FORWARD_ONE_WEEK_UP2_POLICY_LABEL = (
+    f"{BEST_COMBINED_PORTFOLIO_POLICY_LABEL}__mlgbp72_abstain_roll_forward_one_week_up2"
+)
+BEST_COMBINED_PORTFOLIO_MLGBP72_ABSTAIN_ROLL_SAME_WEEK_ATM_POLICY_LABEL = (
+    f"{BEST_COMBINED_PORTFOLIO_POLICY_LABEL}__mlgbp72_abstain_roll_same_week_atm"
+)
+BEST_COMBINED_PORTFOLIO_MLGBP72_ABSTAIN_ROLL_BOTH_LEGS_SAME_WEEK_ATM_POLICY_LABEL = (
+    f"{BEST_COMBINED_PORTFOLIO_POLICY_LABEL}__mlgbp72_abstain_roll_both_legs_same_week_atm"
+)
+BEST_COMBINED_PORTFOLIO_MLGBP72_ABSTAIN_TWO_SIDED_BUTTERFLY_POLICY_LABEL = (
+    f"{BEST_COMBINED_PORTFOLIO_POLICY_LABEL}__mlgbp72_abstain_two_sided_call_put_butterfly"
+)
+BEST_COMBINED_PORTFOLIO_MLGBP72_ABSTAIN_TWO_SIDED_BUTTERFLY_W2_POLICY_LABEL = (
+    f"{BEST_COMBINED_PORTFOLIO_POLICY_LABEL}__mlgbp72_abstain_two_sided_call_put_butterfly_w2"
+)
+BEST_COMBINED_PORTFOLIO_MLGBP72_ABSTAIN_TWO_SIDED_BUTTERFLY_W3_POLICY_LABEL = (
+    f"{BEST_COMBINED_PORTFOLIO_POLICY_LABEL}__mlgbp72_abstain_two_sided_call_put_butterfly_w3"
+)
+MLGBP72_ABSTAIN_CREDIT_SPREAD_TARGET_DELTAS = (20, 30, 40, 45, 50)
+MLGBP72_ABSTAIN_CREDIT_SPREAD_WIDTH_STEPS = (1, 2, 3)
+
+
+def _mlgbp72_abstain_credit_spread_policy_label(target_delta_pct: int, width_steps: int) -> str:
+    return f"abstain_mlgbp72_two_sided_credit_spread_d{target_delta_pct}_w{width_steps}"
+
+
+def _best_combined_portfolio_mlgbp72_abstain_credit_spread_policy_label(
+    target_delta_pct: int,
+    width_steps: int,
+) -> str:
+    return (
+        f"{BEST_COMBINED_PORTFOLIO_POLICY_LABEL}"
+        f"__mlgbp72_abstain_two_sided_credit_spread_d{target_delta_pct}_w{width_steps}"
+    )
+
+
 DEFAULT_TOP43_ABSTAIN_CAP = 29
 DEFAULT_TOP43_METHOD_CAP = 12
+DEFAULT_LOOKBACK_PNL_OVER_DEBIT_THRESHOLD_PCT = 15.0
+DEFAULT_LOOKBACK_PNL_OVER_DEBIT_MIN_HISTORY_TRADES = 5
 TIGHT_METHOD_CAPS_10_10_2 = {"mlgbp72": 10, "mlgb76": 10, "median40rsi": 2}
 TIGHT_METHOD_CAPS_9_10_2 = {"mlgbp72": 9, "mlgb76": 10, "median40rsi": 2}
 DEFAULT_SOFT_VIX_HALF_SIZE_THRESHOLD_PCT = 10.0
@@ -301,6 +399,8 @@ def _load_symbol_cache(
 ) -> tuple[
     dict[date, float],
     dict[date, dict[date, list[tp_grid.delta_grid.OptionRow]]],
+    dict[date, dict[date, list[tp_grid.delta_grid.OptionRow]]],
+    dict[tuple[str, str, str], list[date]],
     dict[tuple[str, str, str], list[date]],
 ]:
     entry_dates = [date.fromisoformat(row["entry_date"]) for row in trades]
@@ -310,28 +410,88 @@ def _load_symbol_cache(
         session,
         symbol=symbol,
         start_date=min(entry_dates),
-        end_date=max(short_expirations),
+        end_date=max(long_expirations),
     )
     ordered_trade_dates = sorted(spot_by_date)
     needed_trade_dates: set[date] = set(entry_dates)
     path_dates_by_trade: dict[tuple[str, str, str], list[date]] = {}
+    extended_path_dates_by_trade: dict[tuple[str, str, str], list[date]] = {}
     for row in trades:
         entry_date = date.fromisoformat(row["entry_date"])
         short_expiration = date.fromisoformat(row["short_expiration"])
+        long_expiration = date.fromisoformat(row["long_expiration"])
         path_dates = [
             trade_date
             for trade_date in ordered_trade_dates
             if entry_date < trade_date <= short_expiration
         ]
+        extended_path_dates = [
+            trade_date
+            for trade_date in ordered_trade_dates
+            if entry_date < trade_date <= long_expiration
+        ]
         path_dates_by_trade[(row["entry_date"], row["symbol"], row["prediction"])] = path_dates
-        needed_trade_dates.update(path_dates)
+        extended_path_dates_by_trade[(row["entry_date"], row["symbol"], row["prediction"])] = extended_path_dates
+        needed_trade_dates.update(extended_path_dates)
     option_rows_by_date = tp_grid._load_option_rows_for_dates_and_expirations(
         session,
         symbol=symbol,
         trade_dates=needed_trade_dates,
         expirations=set(short_expirations).union(long_expirations),
     )
-    return spot_by_date, option_rows_by_date, path_dates_by_trade
+    put_option_rows_by_date = _load_option_rows_for_dates_and_expirations_by_contract_type(
+        session,
+        symbol=symbol,
+        trade_dates=needed_trade_dates,
+        expirations=set(short_expirations).union(long_expirations),
+        contract_type="put",
+    )
+    return (
+        spot_by_date,
+        option_rows_by_date,
+        put_option_rows_by_date,
+        path_dates_by_trade,
+        extended_path_dates_by_trade,
+    )
+
+
+def _load_option_rows_for_dates_and_expirations_by_contract_type(
+    session: Session,
+    *,
+    symbol: str,
+    trade_dates: set[date],
+    expirations: set[date],
+    contract_type: str,
+) -> dict[date, dict[date, list[tp_grid.delta_grid.OptionRow]]]:
+    if not trade_dates or not expirations:
+        return {}
+    stmt = (
+        select(HistoricalOptionDayBar)
+        .where(HistoricalOptionDayBar.underlying_symbol == symbol)
+        .where(HistoricalOptionDayBar.trade_date.in_(sorted(trade_dates)))
+        .where(HistoricalOptionDayBar.expiration_date.in_(sorted(expirations)))
+        .where(HistoricalOptionDayBar.contract_type == contract_type)
+        .order_by(
+            HistoricalOptionDayBar.trade_date,
+            HistoricalOptionDayBar.expiration_date,
+            HistoricalOptionDayBar.strike_price,
+        )
+    )
+    grouped: dict[date, dict[date, list[tp_grid.delta_grid.OptionRow]]] = defaultdict(lambda: defaultdict(list))
+    for row in session.execute(stmt).scalars():
+        grouped[row.trade_date][row.expiration_date].append(
+            tp_grid.delta_grid.OptionRow(
+                option_ticker=row.option_ticker,
+                trade_date=row.trade_date,
+                expiration_date=row.expiration_date,
+                strike_price=float(row.strike_price),
+                close_price=float(row.close_price),
+            )
+        )
+    return {
+        trade_date: {expiration: list(items) for expiration, items in expiration_map.items()}
+        for trade_date, expiration_map in grouped.items()
+    }
 
 
 def _find_option_close(
@@ -396,6 +556,8 @@ def _with_condition_metadata(
     management_applied: bool,
 ) -> dict[str, object]:
     enriched = dict(row)
+    enriched["source_short_strike"] = row.get("source_short_strike", "")
+    enriched["source_long_strike"] = row.get("source_long_strike", "")
     enriched["short_entry_iv_pct"] = _round_or_none(short_entry_iv_pct)
     enriched["vix_effective_trade_date"] = "" if vix_snapshot is None else vix_snapshot.effective_trade_date.isoformat()
     enriched["vix_close_entry"] = None if vix_snapshot is None else _round_or_none(vix_snapshot.close_price)
@@ -523,6 +685,89 @@ def _derive_symbol_side_lookback_filtered_rows(
             history_by_key[key].append((entry_date, pnl))
             pnl_sum_by_key[key] += pnl
     return filtered_rows
+
+
+def _derive_symbol_lookback_pnl_over_debit_filtered_rows(
+    *,
+    rows: list[dict[str, object]],
+    source_policy_label: str,
+    derived_policy_label: str,
+    lookback_days: int = 364,
+    min_history_trades: int = 5,
+    min_pnl_over_debit_pct: float = 15.0,
+) -> list[dict[str, object]]:
+    source_rows = [dict(row) for row in rows if str(row["policy_label"]) == source_policy_label]
+    source_rows.sort(key=lambda row: (str(row["entry_date"]), str(row["symbol"]), str(row["prediction"])))
+    history_by_symbol: dict[str, deque[tuple[date, float, float]]] = defaultdict(deque)
+    pnl_sum_by_symbol: dict[str, float] = defaultdict(float)
+    debit_sum_by_symbol: dict[str, float] = defaultdict(float)
+    filtered_rows: list[dict[str, object]] = []
+    for row in source_rows:
+        entry_date = date.fromisoformat(str(row["entry_date"]))
+        symbol = str(row["symbol"])
+        cutoff_date = entry_date - timedelta(days=lookback_days)
+        history = history_by_symbol[symbol]
+        while history and history[0][0] < cutoff_date:
+            _, expired_pnl, expired_entry_debit = history.popleft()
+            pnl_sum_by_symbol[symbol] -= expired_pnl
+            debit_sum_by_symbol[symbol] -= expired_entry_debit
+        trailing_trade_count = len(history)
+        trailing_entry_debit = debit_sum_by_symbol[symbol]
+        trailing_pnl = pnl_sum_by_symbol[symbol]
+        trailing_pnl_over_debit_pct = (
+            None
+            if trailing_entry_debit <= 0.0
+            else (trailing_pnl / trailing_entry_debit) * 100.0
+        )
+        if (
+            trailing_trade_count < min_history_trades
+            or trailing_pnl_over_debit_pct is None
+            or trailing_pnl_over_debit_pct >= min_pnl_over_debit_pct
+        ):
+            candidate = dict(row)
+            candidate["policy_label"] = derived_policy_label
+            filtered_rows.append(candidate)
+        pnl = _to_float(str(row.get("pnl")))
+        entry_debit = _to_float(str(row.get("entry_debit")))
+        history.append(
+            (
+                entry_date,
+                0.0 if pnl is None else pnl,
+                0.0 if entry_debit is None else entry_debit,
+            )
+        )
+        pnl_sum_by_symbol[symbol] += 0.0 if pnl is None else pnl
+        debit_sum_by_symbol[symbol] += 0.0 if entry_debit is None else entry_debit
+    return filtered_rows
+
+
+def _trade_identity_key(row: dict[str, object]) -> tuple[str, ...]:
+    roll_count = int(row.get("roll_count") or 0)
+    explicit_source_short_strike = row.get("source_short_strike")
+    explicit_source_long_strike = row.get("source_long_strike")
+    source_short_strike = (
+        explicit_source_short_strike
+        if explicit_source_short_strike not in (None, "")
+        else row.get("roll_from_strike")
+        if roll_count > 0 and row.get("roll_from_strike") not in (None, "")
+        else row.get("short_strike")
+    )
+    source_long_strike = (
+        explicit_source_long_strike
+        if explicit_source_long_strike not in (None, "")
+        else row.get("long_strike")
+    )
+    return (
+        str(row.get("entry_date") or ""),
+        str(row.get("symbol") or ""),
+        str(row.get("prediction") or ""),
+        str(row.get("selected_method") or ""),
+        str(row.get("best_delta_target_pct") or ""),
+        str(row.get("short_expiration") or ""),
+        str(row.get("long_expiration") or ""),
+        str(source_short_strike or ""),
+        str(source_long_strike or ""),
+    )
 
 
 def _derive_symbol_median_roi_topk_rows(
@@ -679,10 +924,159 @@ def _derive_symbol_downside_adjusted_topk_rows(
     )
 
 
+def _derive_symbol_lowest_drawdown_pct_topk_rows(
+    *,
+    rows: list[dict[str, object]],
+    source_policy_label: str,
+    derived_policy_label: str,
+    top_k: int,
+    min_history_trades: int = 3,
+    lookback_days: int = 364,
+    selected_method_cap: int | None = None,
+) -> list[dict[str, object]]:
+    return _derive_symbol_scored_topk_rows(
+        rows=rows,
+        source_policy_label=source_policy_label,
+        derived_policy_label=derived_policy_label,
+        top_k=top_k,
+        min_history_trades=min_history_trades,
+        lookback_days=lookback_days,
+        history_scorer=_score_history_by_lowest_drawdown_pct,
+        selected_method_cap=selected_method_cap,
+    )
+
+
+def _derive_symbol_median_roi_minus_drawdown_pct_topk_rows(
+    *,
+    rows: list[dict[str, object]],
+    source_policy_label: str,
+    derived_policy_label: str,
+    top_k: int,
+    min_history_trades: int = 3,
+    lookback_days: int = 364,
+    selected_method_cap: int | None = None,
+) -> list[dict[str, object]]:
+    return _derive_symbol_scored_topk_rows(
+        rows=rows,
+        source_policy_label=source_policy_label,
+        derived_policy_label=derived_policy_label,
+        top_k=top_k,
+        min_history_trades=min_history_trades,
+        lookback_days=lookback_days,
+        history_scorer=_score_history_by_median_roi_minus_drawdown_pct,
+        selected_method_cap=selected_method_cap,
+    )
+
+
+def _derive_symbol_median_roi_plus_p25_topk_rows(
+    *,
+    rows: list[dict[str, object]],
+    source_policy_label: str,
+    derived_policy_label: str,
+    top_k: int,
+    min_history_trades: int = 3,
+    lookback_days: int = 364,
+    selected_method_cap: int | None = None,
+) -> list[dict[str, object]]:
+    return _derive_symbol_scored_topk_rows(
+        rows=rows,
+        source_policy_label=source_policy_label,
+        derived_policy_label=derived_policy_label,
+        top_k=top_k,
+        min_history_trades=min_history_trades,
+        lookback_days=lookback_days,
+        history_scorer=_score_history_by_median_roi_plus_p25,
+        selected_method_cap=selected_method_cap,
+    )
+
+
+def _derive_symbol_median_roi_minus_cvar10_loss_topk_rows(
+    *,
+    rows: list[dict[str, object]],
+    source_policy_label: str,
+    derived_policy_label: str,
+    top_k: int,
+    min_history_trades: int = 3,
+    lookback_days: int = 364,
+    selected_method_cap: int | None = None,
+) -> list[dict[str, object]]:
+    return _derive_symbol_scored_topk_rows(
+        rows=rows,
+        source_policy_label=source_policy_label,
+        derived_policy_label=derived_policy_label,
+        top_k=top_k,
+        min_history_trades=min_history_trades,
+        lookback_days=lookback_days,
+        history_scorer=_score_history_by_median_roi_minus_cvar10_loss,
+        selected_method_cap=selected_method_cap,
+    )
+
+
+def _derive_symbol_profit_factor_guarded_topk_rows(
+    *,
+    rows: list[dict[str, object]],
+    source_policy_label: str,
+    derived_policy_label: str,
+    top_k: int,
+    min_history_trades: int = 3,
+    lookback_days: int = 364,
+    selected_method_cap: int | None = None,
+) -> list[dict[str, object]]:
+    return _derive_symbol_scored_topk_rows(
+        rows=rows,
+        source_policy_label=source_policy_label,
+        derived_policy_label=derived_policy_label,
+        top_k=top_k,
+        min_history_trades=min_history_trades,
+        lookback_days=lookback_days,
+        history_scorer=_score_history_by_profit_factor_guarded,
+        selected_method_cap=selected_method_cap,
+    )
+
+
+def _derive_symbol_sortino_guarded_topk_rows(
+    *,
+    rows: list[dict[str, object]],
+    source_policy_label: str,
+    derived_policy_label: str,
+    top_k: int,
+    min_history_trades: int = 3,
+    lookback_days: int = 364,
+    selected_method_cap: int | None = None,
+) -> list[dict[str, object]]:
+    return _derive_symbol_scored_topk_rows(
+        rows=rows,
+        source_policy_label=source_policy_label,
+        derived_policy_label=derived_policy_label,
+        top_k=top_k,
+        min_history_trades=min_history_trades,
+        lookback_days=lookback_days,
+        history_scorer=_score_history_by_sortino_guarded,
+        selected_method_cap=selected_method_cap,
+    )
+
+
 def _score_history_by_median_roi(values: list[float]) -> float | None:
     if not values:
         return None
     return float(median(values))
+
+
+def _history_max_drawdown_pct(values: list[float], *, starting_equity: float = 100.0) -> float | None:
+    if not values:
+        return None
+    equity = float(starting_equity)
+    running_peak = equity
+    max_drawdown_pct = 0.0
+    for value in values:
+        equity += float(value)
+        if equity > running_peak:
+            running_peak = equity
+        drawdown = running_peak - equity
+        drawdown_pct = (drawdown / running_peak * 100.0) if running_peak > 0 else 0.0
+        if drawdown_pct > max_drawdown_pct:
+            max_drawdown_pct = drawdown_pct
+    return max_drawdown_pct
 
 
 def _linear_percentile(values: list[float], percentile: float) -> float | None:
@@ -710,6 +1104,90 @@ def _score_history_by_median_roi_minus_negative_p25(values: list[float]) -> floa
     return median_roi + min(p25_roi, 0.0)
 
 
+def _score_history_by_lowest_drawdown_pct(values: list[float]) -> float | None:
+    max_drawdown_pct = _history_max_drawdown_pct(values)
+    if max_drawdown_pct is None:
+        return None
+    return -max_drawdown_pct
+
+
+def _score_history_by_median_roi_minus_drawdown_pct(values: list[float]) -> float | None:
+    median_roi = _score_history_by_median_roi(values)
+    max_drawdown_pct = _history_max_drawdown_pct(values)
+    if median_roi is None or max_drawdown_pct is None:
+        return None
+    return median_roi - max_drawdown_pct
+
+
+def _history_cvar_loss_pct(values: list[float], *, tail_fraction: float = 0.1) -> float | None:
+    if not values:
+        return None
+    ordered = sorted(float(value) for value in values)
+    tail_count = max(1, int(math.ceil(len(ordered) * tail_fraction)))
+    tail_mean = mean(ordered[:tail_count])
+    return abs(min(tail_mean, 0.0))
+
+
+def _score_history_by_median_roi_plus_p25(values: list[float]) -> float | None:
+    median_roi = _score_history_by_median_roi(values)
+    p25_roi = _linear_percentile(values, 0.25)
+    if median_roi is None or p25_roi is None:
+        return None
+    return median_roi + p25_roi
+
+
+def _score_history_by_median_roi_minus_cvar10_loss(values: list[float]) -> float | None:
+    median_roi = _score_history_by_median_roi(values)
+    cvar10_loss = _history_cvar_loss_pct(values, tail_fraction=0.1)
+    if median_roi is None or cvar10_loss is None:
+        return None
+    return median_roi - cvar10_loss
+
+
+def _score_history_by_profit_factor_guarded(
+    values: list[float],
+    *,
+    max_profit_factor: float = 10.0,
+) -> float | None:
+    if not values:
+        return None
+    median_roi = _score_history_by_median_roi(values)
+    if median_roi is None:
+        return None
+    gross_profit = sum(float(value) for value in values if value > 0)
+    gross_loss = abs(sum(float(value) for value in values if value < 0))
+    if gross_profit <= 0 and gross_loss <= 0:
+        return 0.0
+    if gross_loss <= 0:
+        profit_factor = max_profit_factor
+    else:
+        profit_factor = min(gross_profit / gross_loss, max_profit_factor)
+    return median_roi * math.log1p(profit_factor)
+
+
+def _score_history_by_sortino_guarded(
+    values: list[float],
+    *,
+    target_return: float = 0.0,
+    max_sortino: float = 5.0,
+) -> float | None:
+    if not values:
+        return None
+    ordered = [float(value) for value in values]
+    average_return = mean(ordered)
+    downside_terms = [min(value - target_return, 0.0) for value in ordered]
+    downside_variance = mean(term * term for term in downside_terms)
+    downside_deviation = math.sqrt(downside_variance)
+    if downside_deviation <= 1e-9:
+        if average_return > target_return:
+            return max_sortino
+        if average_return < target_return:
+            return -max_sortino
+        return 0.0
+    raw_sortino = (average_return - target_return) / downside_deviation
+    return max(-max_sortino, min(raw_sortino, max_sortino))
+
+
 def _has_nonnegative_history_p25(values: list[float]) -> bool:
     p25_roi = _linear_percentile(values, 0.25)
     return p25_roi is not None and p25_roi >= 0.0
@@ -729,6 +1207,13 @@ def _is_abstain_median25trend_trade(row: dict[str, object]) -> bool:
     return (
         str(row.get("prediction")) == "abstain"
         and str(row.get("selected_method")) == "median25trend"
+    )
+
+
+def _is_abstain_mlgbp72_trade(row: dict[str, object]) -> bool:
+    return (
+        str(row.get("prediction")) == "abstain"
+        and str(row.get("selected_method")) == "mlgbp72"
     )
 
 
@@ -943,6 +1428,47 @@ def _derive_soft_vix_half_size_policy_rows(
     return derived_rows
 
 
+def _derive_targeted_replacement_policy_rows(
+    *,
+    rows: list[dict[str, object]],
+    source_policy_label: str,
+    derived_policy_label: str,
+    replacement_policy_label: str,
+    replacement_trade_predicate: Callable[[dict[str, object]], bool],
+    replacement_row_predicate: Callable[[dict[str, object]], bool] | None = None,
+) -> list[dict[str, object]]:
+    source_rows = [dict(row) for row in rows if str(row["policy_label"]) == source_policy_label]
+    source_rows.sort(key=lambda row: (str(row["entry_date"]), str(row["symbol"]), str(row["prediction"])))
+    replacement_rows_by_key = {
+        _trade_identity_key(row): dict(row)
+        for row in rows
+        if str(row.get("policy_label")) == replacement_policy_label
+    }
+    derived_rows: list[dict[str, object]] = []
+    for row in source_rows:
+        if replacement_trade_predicate(row):
+            replacement_row = replacement_rows_by_key.get(_trade_identity_key(row))
+            if replacement_row is not None and (
+                replacement_row_predicate is None or replacement_row_predicate(replacement_row)
+            ):
+                current_weight = _to_float(
+                    None if row.get("position_size_weight") in (None, "") else str(row.get("position_size_weight"))
+                )
+                derived_rows.append(
+                    _clone_position_sized_trade_row(
+                        replacement_row,
+                        derived_policy_label=derived_policy_label,
+                        position_size_weight=1.0 if current_weight is None else current_weight,
+                        position_sizing_rule=str(row.get("position_sizing_rule") or ""),
+                    )
+                )
+                continue
+        candidate = dict(row)
+        candidate["policy_label"] = derived_policy_label
+        derived_rows.append(candidate)
+    return derived_rows
+
+
 def _derive_stress_method_half_size_policy_rows(
     *,
     rows: list[dict[str, object]],
@@ -1002,6 +1528,8 @@ def main() -> int:
         tuple[
             dict[date, float],
             dict[date, dict[date, list[tp_grid.delta_grid.OptionRow]]],
+            dict[date, dict[date, list[tp_grid.delta_grid.OptionRow]]],
+            dict[tuple[str, str, str], list[date]],
             dict[tuple[str, str, str], list[date]],
         ],
     ] = {}
@@ -1065,8 +1593,16 @@ def main() -> int:
                     vix_filtered_out_by_week_prediction[(entry_date_text, prediction)].append(symbol)
                     continue
 
-                spot_by_date, option_rows_by_date, path_dates_by_trade = symbol_cache[symbol]
-                path_dates = path_dates_by_trade[(trade_row["entry_date"], trade_row["symbol"], trade_row["prediction"])]
+                (
+                    spot_by_date,
+                    option_rows_by_date,
+                    put_option_rows_by_date,
+                    path_dates_by_trade,
+                    extended_path_dates_by_trade,
+                ) = symbol_cache[symbol]
+                trade_key = (trade_row["entry_date"], trade_row["symbol"], trade_row["prediction"])
+                path_dates = path_dates_by_trade[trade_key]
+                extended_path_dates = extended_path_dates_by_trade[trade_key]
                 hold_row = mgmt._simulate_hold_to_expiry(
                     trade_row=trade_row,
                     policy_label="hold_best_delta",
@@ -1147,6 +1683,86 @@ def main() -> int:
                     spot_by_date=spot_by_date,
                     path_dates=path_dates,
                 )
+                last_pre_expiration_negative_row = mgmt._simulate_exit_last_pre_expiration_if_negative(
+                    trade_row=trade_row,
+                    option_rows_by_date=option_rows_by_date,
+                    spot_by_date=spot_by_date,
+                    path_dates=path_dates,
+                )
+                roll_forward_one_week_up1_row = (
+                    mgmt._simulate_abstain_roll_short_forward_one_week_on_first_breach(
+                        trade_row=trade_row,
+                        option_rows_by_date=option_rows_by_date,
+                        spot_by_date=spot_by_date,
+                        path_dates=extended_path_dates,
+                        strike_steps=1,
+                    )
+                )
+                roll_forward_one_week_up2_row = (
+                    mgmt._simulate_abstain_roll_short_forward_one_week_on_first_breach(
+                        trade_row=trade_row,
+                        option_rows_by_date=option_rows_by_date,
+                        spot_by_date=spot_by_date,
+                        path_dates=extended_path_dates,
+                        strike_steps=2,
+                    )
+                )
+                roll_same_week_atm_row = mgmt._simulate_abstain_roll_short_same_week_atm_once(
+                    trade_row=trade_row,
+                    option_rows_by_date=option_rows_by_date,
+                    spot_by_date=spot_by_date,
+                    path_dates=path_dates,
+                )
+                roll_both_legs_same_week_atm_row = (
+                    mgmt._simulate_abstain_roll_both_legs_same_week_atm_once(
+                        trade_row=trade_row,
+                        option_rows_by_date=option_rows_by_date,
+                        spot_by_date=spot_by_date,
+                        path_dates=path_dates,
+                    )
+                )
+                two_sided_butterfly_row = mgmt._simulate_abstain_convert_to_same_week_atm_butterfly_on_first_breach(
+                    trade_row=trade_row,
+                    call_option_rows_by_date=option_rows_by_date,
+                    put_option_rows_by_date=put_option_rows_by_date,
+                    spot_by_date=spot_by_date,
+                    path_dates=path_dates,
+                )
+                two_sided_butterfly_w2_row = (
+                    mgmt._simulate_abstain_convert_to_same_week_atm_butterfly_on_first_breach(
+                        trade_row=trade_row,
+                        call_option_rows_by_date=option_rows_by_date,
+                        put_option_rows_by_date=put_option_rows_by_date,
+                        spot_by_date=spot_by_date,
+                        path_dates=path_dates,
+                        wing_steps=2,
+                    )
+                )
+                two_sided_butterfly_w3_row = (
+                    mgmt._simulate_abstain_convert_to_same_week_atm_butterfly_on_first_breach(
+                        trade_row=trade_row,
+                        call_option_rows_by_date=option_rows_by_date,
+                        put_option_rows_by_date=put_option_rows_by_date,
+                        spot_by_date=spot_by_date,
+                        path_dates=path_dates,
+                        wing_steps=3,
+                    )
+                )
+                credit_spread_variant_rows = {
+                    (target_delta_pct, width_steps): (
+                        mgmt._simulate_abstain_convert_to_same_week_credit_spread_on_first_breach(
+                            trade_row=trade_row,
+                            call_option_rows_by_date=option_rows_by_date,
+                            put_option_rows_by_date=put_option_rows_by_date,
+                            spot_by_date=spot_by_date,
+                            path_dates=path_dates,
+                            target_abs_delta_pct=target_delta_pct,
+                            width_steps=width_steps,
+                        )
+                    )
+                    for target_delta_pct in MLGBP72_ABSTAIN_CREDIT_SPREAD_TARGET_DELTAS
+                    for width_steps in MLGBP72_ABSTAIN_CREDIT_SPREAD_WIDTH_STEPS
+                }
                 tp25_row = mgmt._simulate_tp_stop(
                     trade_row=trade_row,
                     option_rows_by_date=option_rows_by_date,
@@ -1205,6 +1821,92 @@ def main() -> int:
                     first_breach_row=tested_row,
                     is_eligible=condition_debit_gt_1_5 and condition_short_iv_gt_130,
                 )
+                if prediction == "abstain" and str(trade_row["selected_method"]) == "mlgbp72":
+                    targeted_mlgbp72_rows = [
+                        (
+                            MLGBP72_ABSTAIN_FIRST_BREACH_POLICY_LABEL,
+                            tested_row,
+                            str(tested_row.get("exit_reason")) == "spot_close_above_short_strike",
+                        ),
+                        (
+                            MLGBP72_ABSTAIN_LAST_PRE_EXPIRATION_NEGATIVE_POLICY_LABEL,
+                            last_pre_expiration_negative_row,
+                            str(last_pre_expiration_negative_row.get("exit_reason")) == "last_pre_expiration_negative",
+                        ),
+                        (
+                            MLGBP72_ABSTAIN_ROLL_FORWARD_ONE_WEEK_UP1_POLICY_LABEL,
+                            roll_forward_one_week_up1_row,
+                            int(roll_forward_one_week_up1_row.get("roll_count") or 0) > 0,
+                        ),
+                        (
+                            MLGBP72_ABSTAIN_ROLL_FORWARD_ONE_WEEK_UP2_POLICY_LABEL,
+                            roll_forward_one_week_up2_row,
+                            int(roll_forward_one_week_up2_row.get("roll_count") or 0) > 0,
+                        ),
+                        (
+                            MLGBP72_ABSTAIN_ROLL_SAME_WEEK_ATM_POLICY_LABEL,
+                            roll_same_week_atm_row,
+                            int(roll_same_week_atm_row.get("roll_count") or 0) > 0,
+                        ),
+                        (
+                            MLGBP72_ABSTAIN_ROLL_BOTH_LEGS_SAME_WEEK_ATM_POLICY_LABEL,
+                            roll_both_legs_same_week_atm_row,
+                            int(roll_both_legs_same_week_atm_row.get("roll_count") or 0) > 0,
+                        ),
+                        (
+                            MLGBP72_ABSTAIN_TWO_SIDED_BUTTERFLY_POLICY_LABEL,
+                            two_sided_butterfly_row,
+                            int(two_sided_butterfly_row.get("roll_count") or 0) > 0,
+                        ),
+                        (
+                            MLGBP72_ABSTAIN_TWO_SIDED_BUTTERFLY_W2_POLICY_LABEL,
+                            two_sided_butterfly_w2_row,
+                            int(two_sided_butterfly_w2_row.get("roll_count") or 0) > 0,
+                        ),
+                        (
+                            MLGBP72_ABSTAIN_TWO_SIDED_BUTTERFLY_W3_POLICY_LABEL,
+                            two_sided_butterfly_w3_row,
+                            int(two_sided_butterfly_w3_row.get("roll_count") or 0) > 0,
+                        ),
+                        *[
+                            (
+                                _mlgbp72_abstain_credit_spread_policy_label(target_delta_pct, width_steps),
+                                credit_spread_variant_rows[(target_delta_pct, width_steps)],
+                                int(
+                                    credit_spread_variant_rows[(target_delta_pct, width_steps)].get("roll_count") or 0
+                                )
+                                > 0,
+                            )
+                            for target_delta_pct in MLGBP72_ABSTAIN_CREDIT_SPREAD_TARGET_DELTAS
+                            for width_steps in MLGBP72_ABSTAIN_CREDIT_SPREAD_WIDTH_STEPS
+                        ],
+                    ]
+                    for policy_label, candidate_row, management_applied in targeted_mlgbp72_rows:
+                        candidate = dict(candidate_row)
+                        candidate["policy_label"] = policy_label
+                        candidate["source_short_strike"] = trade_row["short_strike"]
+                        candidate["source_long_strike"] = trade_row.get("long_strike", trade_row["short_strike"])
+                        detail_rows.append(
+                            _with_condition_metadata(
+                                candidate,
+                                short_entry_iv_pct=short_iv_pct,
+                                vix_snapshot=vix_snapshot,
+                                vix_max_weekly_change_up_pct=args.vix_max_weekly_change_up_pct,
+                                condition_debit_gt_1_5=condition_debit_gt_1_5,
+                                condition_short_iv_gt_100=condition_short_iv_gt_100,
+                                condition_short_iv_gt_110=condition_short_iv_gt_110,
+                                condition_short_iv_gt_130=condition_short_iv_gt_130,
+                                condition_abstain_debit_gt_5_0_iv_35_50=condition_abstain_debit_gt_5_0_iv_35_50,
+                                condition_abstain_debit_gt_2_0_iv_40_45=condition_abstain_debit_gt_2_0_iv_40_45,
+                                condition_abstain_debit_gt_3_0_iv_55_65=condition_abstain_debit_gt_3_0_iv_55_65,
+                                condition_abstain_debit_gt_2_5_iv_55_80=condition_abstain_debit_gt_2_5_iv_55_80,
+                                condition_abstain_piecewise_moderate_iv=condition_abstain_piecewise_moderate_iv,
+                                condition_abstain_midhigh_iv_tested_exit=condition_abstain_midhigh_iv_tested_exit,
+                                condition_up_debit_gt_5_5=condition_up_debit_gt_5_5,
+                                condition_up_short_iv_lt_40=condition_up_short_iv_lt_40,
+                                management_applied=management_applied,
+                            )
+                        )
 
                 policies = [
                     ("cond_tested_exit_debit_gt_1_5", tested_row, condition_debit_gt_1_5),
@@ -1558,6 +2260,121 @@ def main() -> int:
         )
     )
     detail_rows.extend(
+        _derive_symbol_lookback_pnl_over_debit_filtered_rows(
+            rows=detail_rows,
+            source_policy_label=BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN3_WORST_METHOD_SKIP_METHOD_CAP12_POLICY_LABEL,
+            derived_policy_label=BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN3_WORST_METHOD_SKIP_METHOD_CAP12_PNL_OVER_DEBIT_15_MIN5_POLICY_LABEL,
+            min_history_trades=DEFAULT_LOOKBACK_PNL_OVER_DEBIT_MIN_HISTORY_TRADES,
+            min_pnl_over_debit_pct=DEFAULT_LOOKBACK_PNL_OVER_DEBIT_THRESHOLD_PCT,
+        )
+    )
+    detail_rows.extend(
+        _derive_targeted_replacement_policy_rows(
+            rows=detail_rows,
+            source_policy_label=BEST_COMBINED_PORTFOLIO_POLICY_LABEL,
+            derived_policy_label=BEST_COMBINED_PORTFOLIO_MLGBP72_ABSTAIN_FIRST_BREACH_POLICY_LABEL,
+            replacement_policy_label=MLGBP72_ABSTAIN_FIRST_BREACH_POLICY_LABEL,
+            replacement_trade_predicate=_is_abstain_mlgbp72_trade,
+        )
+    )
+    detail_rows.extend(
+        _derive_targeted_replacement_policy_rows(
+            rows=detail_rows,
+            source_policy_label=BEST_COMBINED_PORTFOLIO_POLICY_LABEL,
+            derived_policy_label=BEST_COMBINED_PORTFOLIO_MLGBP72_ABSTAIN_LAST_PRE_EXPIRATION_NEGATIVE_POLICY_LABEL,
+            replacement_policy_label=MLGBP72_ABSTAIN_LAST_PRE_EXPIRATION_NEGATIVE_POLICY_LABEL,
+            replacement_trade_predicate=_is_abstain_mlgbp72_trade,
+        )
+    )
+    detail_rows.extend(
+        _derive_targeted_replacement_policy_rows(
+            rows=detail_rows,
+            source_policy_label=BEST_COMBINED_PORTFOLIO_POLICY_LABEL,
+            derived_policy_label=BEST_COMBINED_PORTFOLIO_MLGBP72_ABSTAIN_ROLL_FORWARD_ONE_WEEK_UP1_POLICY_LABEL,
+            replacement_policy_label=MLGBP72_ABSTAIN_ROLL_FORWARD_ONE_WEEK_UP1_POLICY_LABEL,
+            replacement_trade_predicate=_is_abstain_mlgbp72_trade,
+            replacement_row_predicate=lambda row: int(row.get("roll_count") or 0) > 0,
+        )
+    )
+    detail_rows.extend(
+        _derive_targeted_replacement_policy_rows(
+            rows=detail_rows,
+            source_policy_label=BEST_COMBINED_PORTFOLIO_POLICY_LABEL,
+            derived_policy_label=BEST_COMBINED_PORTFOLIO_MLGBP72_ABSTAIN_ROLL_FORWARD_ONE_WEEK_UP2_POLICY_LABEL,
+            replacement_policy_label=MLGBP72_ABSTAIN_ROLL_FORWARD_ONE_WEEK_UP2_POLICY_LABEL,
+            replacement_trade_predicate=_is_abstain_mlgbp72_trade,
+            replacement_row_predicate=lambda row: int(row.get("roll_count") or 0) > 0,
+        )
+    )
+    detail_rows.extend(
+        _derive_targeted_replacement_policy_rows(
+            rows=detail_rows,
+            source_policy_label=BEST_COMBINED_PORTFOLIO_POLICY_LABEL,
+            derived_policy_label=BEST_COMBINED_PORTFOLIO_MLGBP72_ABSTAIN_ROLL_SAME_WEEK_ATM_POLICY_LABEL,
+            replacement_policy_label=MLGBP72_ABSTAIN_ROLL_SAME_WEEK_ATM_POLICY_LABEL,
+            replacement_trade_predicate=_is_abstain_mlgbp72_trade,
+            replacement_row_predicate=lambda row: int(row.get("roll_count") or 0) > 0,
+        )
+    )
+    detail_rows.extend(
+        _derive_targeted_replacement_policy_rows(
+            rows=detail_rows,
+            source_policy_label=BEST_COMBINED_PORTFOLIO_POLICY_LABEL,
+            derived_policy_label=BEST_COMBINED_PORTFOLIO_MLGBP72_ABSTAIN_ROLL_BOTH_LEGS_SAME_WEEK_ATM_POLICY_LABEL,
+            replacement_policy_label=MLGBP72_ABSTAIN_ROLL_BOTH_LEGS_SAME_WEEK_ATM_POLICY_LABEL,
+            replacement_trade_predicate=_is_abstain_mlgbp72_trade,
+            replacement_row_predicate=lambda row: int(row.get("roll_count") or 0) > 0,
+        )
+    )
+    detail_rows.extend(
+        _derive_targeted_replacement_policy_rows(
+            rows=detail_rows,
+            source_policy_label=BEST_COMBINED_PORTFOLIO_POLICY_LABEL,
+            derived_policy_label=BEST_COMBINED_PORTFOLIO_MLGBP72_ABSTAIN_TWO_SIDED_BUTTERFLY_POLICY_LABEL,
+            replacement_policy_label=MLGBP72_ABSTAIN_TWO_SIDED_BUTTERFLY_POLICY_LABEL,
+            replacement_trade_predicate=_is_abstain_mlgbp72_trade,
+            replacement_row_predicate=lambda row: int(row.get("roll_count") or 0) > 0,
+        )
+    )
+    detail_rows.extend(
+        _derive_targeted_replacement_policy_rows(
+            rows=detail_rows,
+            source_policy_label=BEST_COMBINED_PORTFOLIO_POLICY_LABEL,
+            derived_policy_label=BEST_COMBINED_PORTFOLIO_MLGBP72_ABSTAIN_TWO_SIDED_BUTTERFLY_W2_POLICY_LABEL,
+            replacement_policy_label=MLGBP72_ABSTAIN_TWO_SIDED_BUTTERFLY_W2_POLICY_LABEL,
+            replacement_trade_predicate=_is_abstain_mlgbp72_trade,
+            replacement_row_predicate=lambda row: int(row.get("roll_count") or 0) > 0,
+        )
+    )
+    detail_rows.extend(
+        _derive_targeted_replacement_policy_rows(
+            rows=detail_rows,
+            source_policy_label=BEST_COMBINED_PORTFOLIO_POLICY_LABEL,
+            derived_policy_label=BEST_COMBINED_PORTFOLIO_MLGBP72_ABSTAIN_TWO_SIDED_BUTTERFLY_W3_POLICY_LABEL,
+            replacement_policy_label=MLGBP72_ABSTAIN_TWO_SIDED_BUTTERFLY_W3_POLICY_LABEL,
+            replacement_trade_predicate=_is_abstain_mlgbp72_trade,
+            replacement_row_predicate=lambda row: int(row.get("roll_count") or 0) > 0,
+        )
+    )
+    for target_delta_pct in MLGBP72_ABSTAIN_CREDIT_SPREAD_TARGET_DELTAS:
+        for width_steps in MLGBP72_ABSTAIN_CREDIT_SPREAD_WIDTH_STEPS:
+            detail_rows.extend(
+                _derive_targeted_replacement_policy_rows(
+                    rows=detail_rows,
+                    source_policy_label=BEST_COMBINED_PORTFOLIO_POLICY_LABEL,
+                    derived_policy_label=_best_combined_portfolio_mlgbp72_abstain_credit_spread_policy_label(
+                        target_delta_pct,
+                        width_steps,
+                    ),
+                    replacement_policy_label=_mlgbp72_abstain_credit_spread_policy_label(
+                        target_delta_pct,
+                        width_steps,
+                    ),
+                    replacement_trade_predicate=_is_abstain_mlgbp72_trade,
+                    replacement_row_predicate=lambda row: int(row.get("roll_count") or 0) > 0,
+                )
+            )
+    detail_rows.extend(
         _derive_symbol_median_roi_topk_rows(
             rows=detail_rows,
             source_policy_label=BEST_COMBINED_WORST_METHOD_SKIP_POLICY_LABEL,
@@ -1624,6 +2441,66 @@ def main() -> int:
             min_history_trades=3,
             selected_method_cap=DEFAULT_TOP43_METHOD_CAP,
             weekly_positive_entry_debit_budget=DEFAULT_WEEKLY_DEBIT_BUDGET,
+        )
+    )
+    detail_rows.extend(
+        _derive_symbol_lowest_drawdown_pct_topk_rows(
+            rows=detail_rows,
+            source_policy_label=BEST_COMBINED_WORST_METHOD_SKIP_POLICY_LABEL,
+            derived_policy_label=BEST_COMBINED_TOP43_SYMBOL_LOWEST_DRAWDOWN_PCT_MIN3_WORST_METHOD_SKIP_METHOD_CAP12_POLICY_LABEL,
+            top_k=43,
+            min_history_trades=3,
+            selected_method_cap=DEFAULT_TOP43_METHOD_CAP,
+        )
+    )
+    detail_rows.extend(
+        _derive_symbol_median_roi_minus_drawdown_pct_topk_rows(
+            rows=detail_rows,
+            source_policy_label=BEST_COMBINED_WORST_METHOD_SKIP_POLICY_LABEL,
+            derived_policy_label=BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MINUS_DRAWDOWN_PCT_MIN3_WORST_METHOD_SKIP_METHOD_CAP12_POLICY_LABEL,
+            top_k=43,
+            min_history_trades=3,
+            selected_method_cap=DEFAULT_TOP43_METHOD_CAP,
+        )
+    )
+    detail_rows.extend(
+        _derive_symbol_median_roi_plus_p25_topk_rows(
+            rows=detail_rows,
+            source_policy_label=BEST_COMBINED_WORST_METHOD_SKIP_POLICY_LABEL,
+            derived_policy_label=BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_PLUS_P25_MIN3_WORST_METHOD_SKIP_METHOD_CAP12_POLICY_LABEL,
+            top_k=43,
+            min_history_trades=3,
+            selected_method_cap=DEFAULT_TOP43_METHOD_CAP,
+        )
+    )
+    detail_rows.extend(
+        _derive_symbol_median_roi_minus_cvar10_loss_topk_rows(
+            rows=detail_rows,
+            source_policy_label=BEST_COMBINED_WORST_METHOD_SKIP_POLICY_LABEL,
+            derived_policy_label=BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MINUS_CVAR10_LOSS_MIN3_WORST_METHOD_SKIP_METHOD_CAP12_POLICY_LABEL,
+            top_k=43,
+            min_history_trades=3,
+            selected_method_cap=DEFAULT_TOP43_METHOD_CAP,
+        )
+    )
+    detail_rows.extend(
+        _derive_symbol_profit_factor_guarded_topk_rows(
+            rows=detail_rows,
+            source_policy_label=BEST_COMBINED_WORST_METHOD_SKIP_POLICY_LABEL,
+            derived_policy_label=BEST_COMBINED_TOP43_SYMBOL_PROFIT_FACTOR_GUARDED_MIN3_WORST_METHOD_SKIP_METHOD_CAP12_POLICY_LABEL,
+            top_k=43,
+            min_history_trades=3,
+            selected_method_cap=DEFAULT_TOP43_METHOD_CAP,
+        )
+    )
+    detail_rows.extend(
+        _derive_symbol_sortino_guarded_topk_rows(
+            rows=detail_rows,
+            source_policy_label=BEST_COMBINED_WORST_METHOD_SKIP_POLICY_LABEL,
+            derived_policy_label=BEST_COMBINED_TOP43_SYMBOL_SORTINO_GUARDED_MIN3_WORST_METHOD_SKIP_METHOD_CAP12_POLICY_LABEL,
+            top_k=43,
+            min_history_trades=3,
+            selected_method_cap=DEFAULT_TOP43_METHOD_CAP,
         )
     )
     detail_rows.extend(

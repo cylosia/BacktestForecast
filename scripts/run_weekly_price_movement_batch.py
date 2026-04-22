@@ -2,21 +2,19 @@ from __future__ import annotations
 
 import argparse
 import csv
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import date, datetime
 import json
 from pathlib import Path
-import subprocess
-import sys
-import threading
 import time
+import traceback
 
 from _bootstrap import bootstrap_repo
 
 ROOT = bootstrap_repo(load_api_env=True)
 LOGS_DIR = ROOT / "logs"
-EVALUATOR_SCRIPT = ROOT / "scripts" / "predict_weekly_price_movement.py"
+SHARED_CACHE_RESULTS_DIR = LOGS_DIR / "batch" / "weekly_price_movement" / "_cache" / "results"
 
 import predict_weekly_price_movement as evaluator  # noqa: E402
 
@@ -26,6 +24,24 @@ class SymbolRun:
     symbol: str
     output_path: Path
     log_path: Path
+    cache_path: Path
+
+
+@dataclass(frozen=True, slots=True)
+class WorkerConfig:
+    database_url: str
+    db_statement_timeout_ms: int
+    start_date: date
+    end_date: date
+    horizon_bars: int
+    max_analogs: int | None
+    min_candidate_count: int
+    min_spacing_bars: int
+    warmup_calendar_days: int
+    prediction_method: str
+
+
+_WORKER_CONFIG: WorkerConfig | None = None
 
 
 def _parse_args() -> argparse.Namespace:
@@ -155,6 +171,25 @@ def _result_output_path(
     )
 
 
+def _shared_cache_output_path(
+    *,
+    symbol: str,
+    start_date: date,
+    end_date: date,
+    horizon_bars: int,
+    prediction_method: str,
+) -> Path:
+    return _result_output_path(
+        results_dir=SHARED_CACHE_RESULTS_DIR,
+        symbol=symbol,
+        start_date=start_date,
+        end_date=end_date,
+        horizon_bars=horizon_bars,
+        prediction_method=prediction_method,
+        output_suffix="",
+    )
+
+
 def _is_completed_output(path: Path, *, args: argparse.Namespace) -> bool:
     if not path.exists():
         return False
@@ -180,6 +215,12 @@ def _is_completed_output(path: Path, *, args: argparse.Namespace) -> bool:
         return False
     if parameters.get("min_spacing_bars") != args.min_spacing_bars:
         return False
+    if parameters.get("requested_prediction_method") != args.prediction_method:
+        return False
+    if parameters.get("requested_max_analogs") != args.max_analogs:
+        return False
+    if parameters.get("warmup_calendar_days") != args.warmup_calendar_days:
+        return False
     if args.prediction_method != evaluator.DEFAULT_PREDICTION_METHOD:
         if payload.get("selected_method") != args.prediction_method:
             return False
@@ -187,12 +228,124 @@ def _is_completed_output(path: Path, *, args: argparse.Namespace) -> bool:
     return latest_prediction is None or isinstance(latest_prediction, dict)
 
 
-def _append_jsonl(path: Path, row: dict[str, object], lock: threading.Lock) -> None:
+def _append_jsonl(path: Path, row: dict[str, object]) -> None:
     line = json.dumps(row, sort_keys=True)
-    with lock:
-        with path.open("a", encoding="utf-8") as handle:
-            handle.write(line)
-            handle.write("\n")
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(line)
+        handle.write("\n")
+
+
+def _load_completed_payload(path: Path, *, args: argparse.Namespace) -> dict[str, object] | None:
+    if not _is_completed_output(path, args=args):
+        return None
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _write_payload(path: Path, payload: dict[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+
+
+def _write_symbol_log(
+    *,
+    log_path: Path,
+    symbol: str,
+    status: str,
+    started_at: str,
+    elapsed_seconds: float,
+    details: list[str] | None = None,
+) -> None:
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    lines = [
+        f"SYMBOL: {symbol}",
+        f"STATUS: {status}",
+        f"STARTED_AT: {started_at}",
+        f"ELAPSED_SECONDS: {elapsed_seconds:.3f}",
+    ]
+    if details:
+        lines.extend(["", *details])
+    log_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _materialize_cache_hit(
+    *,
+    item: SymbolRun,
+    args: argparse.Namespace,
+    status: str,
+    source_path: Path,
+    elapsed_seconds: float,
+) -> dict[str, object] | None:
+    payload = _load_completed_payload(source_path, args=args)
+    if payload is None:
+        return None
+    _write_payload(item.output_path, payload)
+    if source_path != item.cache_path:
+        _write_payload(item.cache_path, payload)
+    _write_symbol_log(
+        log_path=item.log_path,
+        symbol=item.symbol,
+        status=status,
+        started_at=datetime.now().isoformat(),
+        elapsed_seconds=elapsed_seconds,
+        details=[f"SOURCE: {str(source_path.relative_to(ROOT)).replace('\\', '/')}"],
+    )
+    return _summary_row_from_payload(
+        payload=payload,
+        output_path=item.output_path,
+        log_path=item.log_path,
+        elapsed_seconds=elapsed_seconds,
+        status=status,
+    )
+
+
+def _worker_initialize(config: WorkerConfig) -> None:
+    global _WORKER_CONFIG
+    _WORKER_CONFIG = config
+    evaluator.preload_benchmark_bars(
+        database_url=config.database_url,
+        db_statement_timeout_ms=config.db_statement_timeout_ms,
+        start_date=config.start_date,
+        end_date=config.end_date,
+        warmup_calendar_days=config.warmup_calendar_days,
+    )
+
+
+def _evaluate_symbol_in_worker(symbol: str) -> dict[str, object]:
+    if _WORKER_CONFIG is None:
+        raise RuntimeError("Worker config was not initialized.")
+    started_at = datetime.now().isoformat()
+    start_ts = time.perf_counter()
+    try:
+        payload = evaluator.evaluate_symbol_to_payload(
+            symbol=symbol,
+            database_url=_WORKER_CONFIG.database_url,
+            db_statement_timeout_ms=_WORKER_CONFIG.db_statement_timeout_ms,
+            start_date=_WORKER_CONFIG.start_date,
+            end_date=_WORKER_CONFIG.end_date,
+            horizon_bars=_WORKER_CONFIG.horizon_bars,
+            max_analogs=_WORKER_CONFIG.max_analogs,
+            min_candidate_count=_WORKER_CONFIG.min_candidate_count,
+            min_spacing_bars=_WORKER_CONFIG.min_spacing_bars,
+            warmup_calendar_days=_WORKER_CONFIG.warmup_calendar_days,
+            prediction_method=_WORKER_CONFIG.prediction_method,
+        )
+        return {
+            "symbol": symbol,
+            "status": "completed",
+            "started_at": started_at,
+            "elapsed_seconds": round(time.perf_counter() - start_ts, 3),
+            "payload": payload,
+        }
+    except Exception as exc:  # pragma: no cover - exercised via batch integration behavior
+        return {
+            "symbol": symbol,
+            "status": "failed",
+            "started_at": started_at,
+            "elapsed_seconds": round(time.perf_counter() - start_ts, 3),
+            "error": str(exc),
+            "traceback": traceback.format_exc(),
+            "returncode": 1,
+        }
 
 
 def _summary_row_from_payload(
@@ -253,98 +406,6 @@ def _summary_row_from_payload(
     }
 
 
-def _run_symbol(
-    *,
-    item: SymbolRun,
-    args: argparse.Namespace,
-    status_jsonl: Path,
-    status_lock: threading.Lock,
-) -> dict[str, object]:
-    start_ts = time.perf_counter()
-    if not args.force and _is_completed_output(item.output_path, args=args):
-        payload = json.loads(item.output_path.read_text(encoding="utf-8"))
-        row = _summary_row_from_payload(
-            payload=payload,
-            output_path=item.output_path,
-            log_path=item.log_path,
-            elapsed_seconds=0.0,
-            status="skipped_existing",
-        )
-        _append_jsonl(status_jsonl, row, status_lock)
-        return row
-
-    command = [
-        sys.executable,
-        str(EVALUATOR_SCRIPT),
-        "--symbol",
-        item.symbol,
-        "--database-url",
-        args.database_url,
-        "--db-statement-timeout-ms",
-        str(args.db_statement_timeout_ms),
-        "--start-date",
-        args.start_date.isoformat(),
-        "--end-date",
-        args.end_date.isoformat(),
-        "--horizon-bars",
-        str(args.horizon_bars),
-        "--min-candidate-count",
-        str(args.min_candidate_count),
-        "--min-spacing-bars",
-        str(args.min_spacing_bars),
-        "--warmup-calendar-days",
-        str(args.warmup_calendar_days),
-        "--prediction-method",
-        args.prediction_method,
-        "--output-json",
-        str(item.output_path),
-    ]
-    if args.max_analogs is not None:
-        command.extend(["--max-analogs", str(args.max_analogs)])
-
-    item.log_path.parent.mkdir(parents=True, exist_ok=True)
-    with item.log_path.open("w", encoding="utf-8") as handle:
-        handle.write("COMMAND: " + subprocess.list2cmdline(command) + "\n")
-        handle.write(f"STARTED_AT: {datetime.now().isoformat()}\n\n")
-        completed = subprocess.run(
-            command,
-            cwd=str(ROOT),
-            stdout=handle,
-            stderr=subprocess.STDOUT,
-            text=True,
-            check=False,
-        )
-        handle.write(f"\nEXIT_CODE: {completed.returncode}\n")
-
-    elapsed = round(time.perf_counter() - start_ts, 3)
-    if completed.returncode == 0 and _is_completed_output(item.output_path, args=args):
-        payload = json.loads(item.output_path.read_text(encoding="utf-8"))
-        row = _summary_row_from_payload(
-            payload=payload,
-            output_path=item.output_path,
-            log_path=item.log_path,
-            elapsed_seconds=elapsed,
-            status="completed",
-        )
-        _append_jsonl(status_jsonl, row, status_lock)
-        return row
-
-    row = {
-        "symbol": item.symbol,
-        "status": "failed",
-        "requested_start_date": args.start_date.isoformat(),
-        "requested_end_date": args.end_date.isoformat(),
-        "horizon_bars": args.horizon_bars,
-        "prediction_method": args.prediction_method,
-        "output_path": str(item.output_path.relative_to(ROOT)).replace("\\", "/"),
-        "log_path": str(item.log_path.relative_to(ROOT)).replace("\\", "/"),
-        "elapsed_seconds": elapsed,
-        "returncode": completed.returncode,
-    }
-    _append_jsonl(status_jsonl, row, status_lock)
-    return row
-
-
 def _write_summary_csv(*, rows: list[dict[str, object]], path: Path) -> None:
     fieldnames = [
         "symbol",
@@ -403,7 +464,7 @@ def main() -> int:
     status_jsonl = batch_dir / "status.jsonl"
     summary_csv = batch_dir / "summary.csv"
     results_dir.mkdir(parents=True, exist_ok=True)
-    status_lock = threading.Lock()
+    SHARED_CACHE_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
     runs = [
         SymbolRun(
@@ -418,6 +479,13 @@ def main() -> int:
                 output_suffix=args.output_suffix,
             ),
             log_path=batch_dir / "logs" / f"{symbol.lower()}.log",
+            cache_path=_shared_cache_output_path(
+                symbol=symbol,
+                start_date=args.start_date,
+                end_date=args.end_date,
+                horizon_bars=args.horizon_bars,
+                prediction_method=args.prediction_method,
+            ),
         )
         for symbol in symbols
     ]
@@ -444,27 +512,119 @@ def main() -> int:
     )
 
     results: list[dict[str, object]] = []
-    with ThreadPoolExecutor(max_workers=args.max_workers) as executor:
-        futures = {
-            executor.submit(
-                _run_symbol,
-                item=item,
-                args=args,
-                status_jsonl=status_jsonl,
-                status_lock=status_lock,
-            ): item.symbol
-            for item in runs
-        }
-        for future in as_completed(futures):
-            row = future.result()
-            results.append(row)
-            print(json.dumps(row, sort_keys=True))
+    pending_runs: list[SymbolRun] = []
+    for item in runs:
+        if args.force:
+            pending_runs.append(item)
+            continue
+        local_row = _materialize_cache_hit(
+            item=item,
+            args=args,
+            status="skipped_existing",
+            source_path=item.output_path,
+            elapsed_seconds=0.0,
+        )
+        if local_row is not None:
+            results.append(local_row)
+            _append_jsonl(status_jsonl, local_row)
+            print(json.dumps(local_row, sort_keys=True))
+            continue
+        cached_row = _materialize_cache_hit(
+            item=item,
+            args=args,
+            status="reused_cache",
+            source_path=item.cache_path,
+            elapsed_seconds=0.0,
+        )
+        if cached_row is not None:
+            results.append(cached_row)
+            _append_jsonl(status_jsonl, cached_row)
+            print(json.dumps(cached_row, sort_keys=True))
+            continue
+        pending_runs.append(item)
+
+    if pending_runs:
+        worker_config = WorkerConfig(
+            database_url=args.database_url,
+            db_statement_timeout_ms=args.db_statement_timeout_ms,
+            start_date=args.start_date,
+            end_date=args.end_date,
+            horizon_bars=args.horizon_bars,
+            max_analogs=args.max_analogs,
+            min_candidate_count=args.min_candidate_count,
+            min_spacing_bars=args.min_spacing_bars,
+            warmup_calendar_days=args.warmup_calendar_days,
+            prediction_method=args.prediction_method,
+        )
+        with ProcessPoolExecutor(
+            max_workers=args.max_workers,
+            initializer=_worker_initialize,
+            initargs=(worker_config,),
+        ) as executor:
+            futures = {
+                executor.submit(_evaluate_symbol_in_worker, item.symbol): item
+                for item in pending_runs
+            }
+            for future in as_completed(futures):
+                item = futures[future]
+                worker_result = future.result()
+                if worker_result["status"] == "completed":
+                    payload = worker_result["payload"]
+                    _write_payload(item.output_path, payload)
+                    _write_payload(item.cache_path, payload)
+                    _write_symbol_log(
+                        log_path=item.log_path,
+                        symbol=item.symbol,
+                        status="completed",
+                        started_at=str(worker_result["started_at"]),
+                        elapsed_seconds=float(worker_result["elapsed_seconds"]),
+                        details=[
+                            f"CACHE_WRITTEN: {str(item.cache_path.relative_to(ROOT)).replace('\\', '/')}",
+                            f"SELECTED_METHOD: {str(payload.get('selected_method'))}",
+                        ],
+                    )
+                    row = _summary_row_from_payload(
+                        payload=payload,
+                        output_path=item.output_path,
+                        log_path=item.log_path,
+                        elapsed_seconds=float(worker_result["elapsed_seconds"]),
+                        status="completed",
+                    )
+                else:
+                    _write_symbol_log(
+                        log_path=item.log_path,
+                        symbol=item.symbol,
+                        status="failed",
+                        started_at=str(worker_result["started_at"]),
+                        elapsed_seconds=float(worker_result["elapsed_seconds"]),
+                        details=[
+                            f"ERROR: {str(worker_result.get('error') or '')}",
+                            "",
+                            str(worker_result.get("traceback") or ""),
+                        ],
+                    )
+                    row = {
+                        "symbol": item.symbol,
+                        "status": "failed",
+                        "requested_start_date": args.start_date.isoformat(),
+                        "requested_end_date": args.end_date.isoformat(),
+                        "horizon_bars": args.horizon_bars,
+                        "prediction_method": args.prediction_method,
+                        "output_path": str(item.output_path.relative_to(ROOT)).replace("\\", "/"),
+                        "log_path": str(item.log_path.relative_to(ROOT)).replace("\\", "/"),
+                        "elapsed_seconds": float(worker_result["elapsed_seconds"]),
+                        "returncode": int(worker_result.get("returncode") or 1),
+                    }
+                results.append(row)
+                _append_jsonl(status_jsonl, row)
+                print(json.dumps(row, sort_keys=True))
 
     results.sort(key=lambda item: str(item["symbol"]))
     _write_summary_csv(rows=results, path=summary_csv)
 
     completed_count = sum(1 for row in results if row["status"] == "completed")
     skipped_count = sum(1 for row in results if row["status"] == "skipped_existing")
+    reused_cache_count = sum(1 for row in results if row["status"] == "reused_cache")
     failed_count = sum(1 for row in results if row["status"] == "failed")
     print(
         json.dumps(
@@ -472,6 +632,7 @@ def main() -> int:
                 "run_label": run_label,
                 "completed_count": completed_count,
                 "skipped_count": skipped_count,
+                "reused_cache_count": reused_cache_count,
                 "failed_count": failed_count,
                 "summary_csv": str(summary_csv.relative_to(ROOT)).replace("\\", "/"),
             },

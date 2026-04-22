@@ -223,6 +223,296 @@ def _pick_roll_short_strike(
     return chosen.strike_price, chosen.close_price
 
 
+def _pick_roll_short_strike_steps_above(
+    *,
+    option_rows_by_date: dict[date, dict[date, list[tp_grid.delta_grid.OptionRow]]],
+    mark_date: date,
+    expiration_date: date,
+    current_short_strike: float,
+    strike_steps: int,
+) -> tuple[float, float] | None:
+    expiration_map = option_rows_by_date.get(mark_date)
+    if expiration_map is None:
+        return None
+    if strike_steps <= 0:
+        return None
+    higher_rows = sorted(
+        {
+            row.strike_price: row
+            for row in expiration_map.get(expiration_date, [])
+            if row.close_price > 0 and row.strike_price > current_short_strike
+        }.values(),
+        key=lambda row: row.strike_price,
+    )
+    if len(higher_rows) < strike_steps:
+        return None
+    chosen = higher_rows[strike_steps - 1]
+    return chosen.strike_price, chosen.close_price
+
+
+def _pick_common_calendar_roll_strike(
+    *,
+    option_rows_by_date: dict[date, dict[date, list[tp_grid.delta_grid.OptionRow]]],
+    mark_date: date,
+    short_expiration: date,
+    long_expiration: date,
+    current_common_strike: float,
+    spot_mark: float,
+) -> tuple[float, float, float] | None:
+    expiration_map = option_rows_by_date.get(mark_date)
+    if expiration_map is None:
+        return None
+    short_rows_by_strike = {
+        row.strike_price: row
+        for row in expiration_map.get(short_expiration, [])
+        if row.close_price > 0 and row.strike_price > current_common_strike
+    }
+    long_rows_by_strike = {
+        row.strike_price: row
+        for row in expiration_map.get(long_expiration, [])
+        if row.close_price > 0 and row.strike_price > current_common_strike
+    }
+    common_strikes = sorted(set(short_rows_by_strike).intersection(long_rows_by_strike))
+    if not common_strikes:
+        return None
+    candidates_at_or_above_spot = [strike for strike in common_strikes if strike >= spot_mark]
+    if candidates_at_or_above_spot:
+        chosen_strike = min(candidates_at_or_above_spot, key=lambda strike: (strike - spot_mark, strike))
+    else:
+        chosen_strike = min(common_strikes, key=lambda strike: (abs(strike - spot_mark), strike))
+    return (
+        chosen_strike,
+        short_rows_by_strike[chosen_strike].close_price,
+        long_rows_by_strike[chosen_strike].close_price,
+    )
+
+
+def _intrinsic_put(strike_price: float, spot_price: float) -> float:
+    return max(strike_price - spot_price, 0.0)
+
+
+def _mark_put_leg(
+    *,
+    rows_by_strike: dict[float, tp_grid.delta_grid.OptionRow],
+    target_strike: float,
+    spot_mark: float,
+    is_expiring_leg: bool,
+) -> tuple[float | None, str]:
+    exact = rows_by_strike.get(target_strike)
+    if exact is not None:
+        return exact.close_price, "exact"
+    intrinsic = _intrinsic_put(target_strike, spot_mark)
+    if is_expiring_leg:
+        return intrinsic, "expiry_intrinsic"
+    if not rows_by_strike:
+        return intrinsic, "intrinsic_no_chain"
+    nearest_strike = min(rows_by_strike, key=lambda strike: (abs(strike - target_strike), strike))
+    nearest = rows_by_strike[nearest_strike]
+    adjusted = nearest.close_price + (
+        _intrinsic_put(target_strike, spot_mark) - _intrinsic_put(nearest_strike, spot_mark)
+    )
+    return max(adjusted, intrinsic), "nearest_strike_adjusted"
+
+
+def _option_delta_from_price(
+    *,
+    option_price: float,
+    spot_price: float,
+    strike_price: float,
+    trade_date: date,
+    expiration_date: date,
+    contract_type: str,
+) -> float | None:
+    if option_price <= 0 or spot_price <= 0 or strike_price <= 0:
+        return None
+    dte_days = max((expiration_date - trade_date).days, 1)
+    iv = tp_grid.delta_grid.implied_volatility_from_price(
+        option_price=option_price,
+        underlying_price=spot_price,
+        strike_price=strike_price,
+        time_to_expiry_years=dte_days / 365.0,
+        option_type=contract_type,
+        risk_free_rate=0.045,
+        dividend_yield=0.0,
+    )
+    if iv is None:
+        return None
+    return tp_grid.delta_grid._approx_bsm_delta(
+        spot=spot_price,
+        strike=strike_price,
+        dte_days=dte_days,
+        contract_type=contract_type,
+        vol=float(iv),
+        risk_free_rate=0.045,
+        dividend_yield=0.0,
+    )
+
+
+def _pick_atm_butterfly_strikes(
+    *,
+    rows_by_strike: dict[float, tp_grid.delta_grid.OptionRow],
+    spot_mark: float,
+    wing_steps: int = 1,
+) -> tuple[float, float, float] | None:
+    strikes = sorted(rows_by_strike)
+    if len(strikes) < (2 * wing_steps) + 1:
+        return None
+    center_index = min(range(len(strikes)), key=lambda idx: (abs(strikes[idx] - spot_mark), strikes[idx]))
+    if center_index - wing_steps < 0 or center_index + wing_steps >= len(strikes):
+        return None
+    return (
+        strikes[center_index - wing_steps],
+        strikes[center_index],
+        strikes[center_index + wing_steps],
+    )
+
+
+def _mark_butterfly_package(
+    *,
+    option_rows_by_date: dict[date, dict[date, list[tp_grid.delta_grid.OptionRow]]],
+    mark_date: date,
+    expiration: date,
+    lower_strike: float,
+    center_strike: float,
+    upper_strike: float,
+    spot_mark: float,
+    contract_type: str,
+) -> dict[str, object] | None:
+    expiration_map = option_rows_by_date.get(mark_date)
+    if expiration_map is None:
+        return None
+    rows_by_strike = {
+        row.strike_price: row
+        for row in expiration_map.get(expiration, [])
+    }
+    if contract_type == "call":
+        marker = tp_grid.delta_grid._mark_call_leg
+    else:
+        marker = _mark_put_leg
+    lower_mark, lower_method = marker(
+        rows_by_strike=rows_by_strike,
+        target_strike=lower_strike,
+        spot_mark=spot_mark,
+        is_expiring_leg=(mark_date == expiration),
+    )
+    center_mark, center_method = marker(
+        rows_by_strike=rows_by_strike,
+        target_strike=center_strike,
+        spot_mark=spot_mark,
+        is_expiring_leg=(mark_date == expiration),
+    )
+    upper_mark, upper_method = marker(
+        rows_by_strike=rows_by_strike,
+        target_strike=upper_strike,
+        spot_mark=spot_mark,
+        is_expiring_leg=(mark_date == expiration),
+    )
+    if lower_mark is None or center_mark is None or upper_mark is None:
+        return None
+    return {
+        "package_mark": float(lower_mark) + float(upper_mark) - (2.0 * float(center_mark)),
+        "mark_method": f"{contract_type}_butterfly:{lower_method}|{center_method}|{upper_method}",
+    }
+
+
+def _pick_credit_spread_strikes_by_delta(
+    *,
+    rows_by_strike: dict[float, tp_grid.delta_grid.OptionRow],
+    spot_mark: float,
+    trade_date: date,
+    expiration: date,
+    contract_type: str,
+    target_abs_delta: float,
+    width_steps: int,
+) -> tuple[float, float] | None:
+    strikes = sorted(rows_by_strike)
+    if len(strikes) < width_steps + 1:
+        return None
+    if contract_type == "call":
+        valid_indices = [idx for idx in range(len(strikes) - width_steps)]
+        preferred_indices = [idx for idx in valid_indices if strikes[idx] >= spot_mark]
+        long_index = lambda idx: idx + width_steps
+    else:
+        valid_indices = [idx for idx in range(width_steps, len(strikes))]
+        preferred_indices = [idx for idx in valid_indices if strikes[idx] <= spot_mark]
+        long_index = lambda idx: idx - width_steps
+
+    def _choose(indices: list[int]) -> tuple[float, float] | None:
+        scored: list[tuple[float, float, float, float, int]] = []
+        for idx in indices:
+            short_strike = strikes[idx]
+            short_row = rows_by_strike[short_strike]
+            delta = _option_delta_from_price(
+                option_price=short_row.close_price,
+                spot_price=spot_mark,
+                strike_price=short_strike,
+                trade_date=trade_date,
+                expiration_date=expiration,
+                contract_type=contract_type,
+            )
+            if delta is None:
+                continue
+            abs_delta = abs(delta)
+            scored.append(
+                (
+                    abs(abs_delta - target_abs_delta),
+                    abs(short_strike - spot_mark),
+                    abs_delta,
+                    short_strike,
+                    idx,
+                )
+            )
+        if not scored:
+            return None
+        _, _, _, short_strike, idx = min(scored)
+        return short_strike, strikes[long_index(idx)]
+
+    return _choose(preferred_indices) or _choose(valid_indices)
+
+
+def _mark_vertical_credit_package(
+    *,
+    option_rows_by_date: dict[date, dict[date, list[tp_grid.delta_grid.OptionRow]]],
+    mark_date: date,
+    expiration: date,
+    short_strike: float,
+    long_strike: float,
+    spot_mark: float,
+    contract_type: str,
+) -> dict[str, object] | None:
+    expiration_map = option_rows_by_date.get(mark_date)
+    if expiration_map is None:
+        return None
+    rows_by_strike = {
+        row.strike_price: row
+        for row in expiration_map.get(expiration, [])
+    }
+    if contract_type == "call":
+        marker = tp_grid.delta_grid._mark_call_leg
+    else:
+        marker = _mark_put_leg
+    short_mark, short_method = marker(
+        rows_by_strike=rows_by_strike,
+        target_strike=short_strike,
+        spot_mark=spot_mark,
+        is_expiring_leg=(mark_date == expiration),
+    )
+    long_mark, long_method = marker(
+        rows_by_strike=rows_by_strike,
+        target_strike=long_strike,
+        spot_mark=spot_mark,
+        is_expiring_leg=(mark_date == expiration),
+    )
+    if short_mark is None or long_mark is None:
+        return None
+    return {
+        "package_mark": float(long_mark) - float(short_mark),
+        "mark_method": f"{contract_type}_credit_spread:{short_method}|{long_method}",
+        "entry_credit": max(float(short_mark) - float(long_mark), 0.0),
+        "width_value": abs(long_strike - short_strike),
+    }
+
+
 def _build_output_row(
     *,
     trade_row: dict[str, str],
@@ -457,6 +747,95 @@ def _simulate_exit_on_tested_strike_abstain(
     )
 
 
+def _simulate_exit_last_pre_expiration_if_negative(
+    *,
+    trade_row: dict[str, str],
+    option_rows_by_date: dict[date, dict[date, list[tp_grid.delta_grid.OptionRow]]],
+    spot_by_date: dict[date, float],
+    path_dates: list[date],
+) -> dict[str, object]:
+    policy_label = "abstain_last_pre_expiration_negative_exit"
+    if trade_row["prediction"] != "abstain":
+        return _simulate_hold_to_expiry(
+            trade_row=trade_row,
+            policy_label=policy_label,
+            option_rows_by_date=option_rows_by_date,
+            spot_by_date=spot_by_date,
+            path_dates=path_dates,
+        )
+    entry_debit = float(trade_row["entry_debit"])
+    if entry_debit <= 0:
+        return _simulate_hold_to_expiry(
+            trade_row=trade_row,
+            policy_label=policy_label,
+            option_rows_by_date=option_rows_by_date,
+            spot_by_date=spot_by_date,
+            path_dates=path_dates,
+        )
+    short_expiration = date.fromisoformat(trade_row["short_expiration"])
+    long_expiration = date.fromisoformat(trade_row["long_expiration"])
+    short_strike = float(trade_row["short_strike"])
+    long_strike = short_strike
+    last_pre_expiration_mark: tuple[date, float, dict[str, object]] | None = None
+    for mark_date in path_dates:
+        if mark_date >= short_expiration:
+            continue
+        spot_mark = spot_by_date.get(mark_date)
+        if spot_mark is None:
+            continue
+        mark = _mark_position(
+            option_rows_by_date=option_rows_by_date,
+            mark_date=mark_date,
+            short_expiration=short_expiration,
+            long_expiration=long_expiration,
+            short_strike=short_strike,
+            long_strike=long_strike,
+            spot_mark=spot_mark,
+        )
+        if mark is None:
+            continue
+        last_pre_expiration_mark = (mark_date, spot_mark, mark)
+    if last_pre_expiration_mark is None:
+        return _simulate_hold_to_expiry(
+            trade_row=trade_row,
+            policy_label=policy_label,
+            option_rows_by_date=option_rows_by_date,
+            spot_by_date=spot_by_date,
+            path_dates=path_dates,
+        )
+    exit_date, spot_mark, mark = last_pre_expiration_mark
+    pnl = float(mark["spread_mark"]) - entry_debit
+    if pnl >= 0:
+        return _simulate_hold_to_expiry(
+            trade_row=trade_row,
+            policy_label=policy_label,
+            option_rows_by_date=option_rows_by_date,
+            spot_by_date=spot_by_date,
+            path_dates=path_dates,
+        )
+    roi_pct = (pnl / entry_debit) * 100.0
+    return _build_output_row(
+        trade_row=trade_row,
+        policy_label=policy_label,
+        exit_date=exit_date,
+        exit_reason="last_pre_expiration_negative",
+        entry_debit=entry_debit,
+        spread_mark=float(mark["spread_mark"]),
+        pnl=pnl,
+        roi_pct=roi_pct,
+        spot_close_exit=spot_mark,
+        short_strike=short_strike,
+        long_strike=long_strike,
+        short_mark_method=str(mark["short_mark_method"]),
+        long_mark_method=str(mark["long_mark_method"]),
+        roll_count=0,
+        roll_date=None,
+        roll_from_strike=None,
+        roll_to_strike=None,
+        roll_net_debit=None,
+    )
+
+
 def _simulate_tp_stop(
     *,
     trade_row: dict[str, str],
@@ -617,6 +996,740 @@ def _simulate_up_roll_short_once(
             pnl=pnl,
             roi_pct=roi_pct,
             spot_close_exit=spot_by_date.get(short_expiration),
+            short_strike=current_short_strike,
+            long_strike=long_strike,
+            short_mark_method=trade_row["short_mark_method"],
+            long_mark_method=trade_row["long_mark_method"],
+            roll_count=roll_count,
+            roll_date=roll_date,
+            roll_from_strike=roll_from_strike,
+            roll_to_strike=roll_to_strike,
+            roll_net_debit=roll_net_debit,
+        )
+
+    pnl = float(final_mark["spread_mark"]) - adjusted_entry_debit
+    roi_pct = None if adjusted_entry_debit <= 0 else (pnl / adjusted_entry_debit) * 100.0
+    return _build_output_row(
+        trade_row=trade_row,
+        policy_label=policy_label,
+        exit_date=final_mark_date,
+        exit_reason="expiration",
+        entry_debit=adjusted_entry_debit,
+        spread_mark=float(final_mark["spread_mark"]),
+        pnl=pnl,
+        roi_pct=roi_pct,
+        spot_close_exit=final_spot,
+        short_strike=current_short_strike,
+        long_strike=long_strike,
+        short_mark_method=str(final_mark["short_mark_method"]),
+        long_mark_method=str(final_mark["long_mark_method"]),
+        roll_count=roll_count,
+        roll_date=roll_date,
+        roll_from_strike=roll_from_strike,
+        roll_to_strike=roll_to_strike,
+        roll_net_debit=roll_net_debit,
+    )
+
+
+def _simulate_abstain_roll_short_same_week_atm_once(
+    *,
+    trade_row: dict[str, str],
+    option_rows_by_date: dict[date, dict[date, list[tp_grid.delta_grid.OptionRow]]],
+    spot_by_date: dict[date, float],
+    path_dates: list[date],
+) -> dict[str, object]:
+    policy_label = "abstain_roll_short_same_week_atm_once"
+    entry_debit = float(trade_row["entry_debit"])
+    short_expiration = date.fromisoformat(trade_row["short_expiration"])
+    long_expiration = date.fromisoformat(trade_row["long_expiration"])
+    original_short_strike = float(trade_row["short_strike"])
+    long_strike = original_short_strike
+    if entry_debit <= 0 or trade_row["prediction"] != "abstain":
+        return _simulate_hold_to_expiry(
+            trade_row=trade_row,
+            policy_label=policy_label,
+            option_rows_by_date=option_rows_by_date,
+            spot_by_date=spot_by_date,
+            path_dates=path_dates,
+        )
+
+    current_short_strike = original_short_strike
+    adjusted_entry_debit = entry_debit
+    roll_count = 0
+    roll_date: date | None = None
+    roll_from_strike: float | None = None
+    roll_to_strike: float | None = None
+    roll_net_debit: float | None = None
+    final_mark_date = short_expiration
+    final_spot = spot_by_date.get(short_expiration)
+    final_mark = None
+
+    for mark_date in path_dates:
+        spot_mark = spot_by_date.get(mark_date)
+        if spot_mark is None:
+            continue
+        mark = _mark_position(
+            option_rows_by_date=option_rows_by_date,
+            mark_date=mark_date,
+            short_expiration=short_expiration,
+            long_expiration=long_expiration,
+            short_strike=current_short_strike,
+            long_strike=long_strike,
+            spot_mark=spot_mark,
+        )
+        if mark is None:
+            continue
+        final_mark_date = mark_date
+        final_spot = spot_mark
+        final_mark = mark
+        if roll_count == 0 and mark_date < short_expiration and spot_mark > current_short_strike:
+            current_short_mark = float(mark["short_mark"])
+            replacement = _pick_roll_short_strike(
+                option_rows_by_date=option_rows_by_date,
+                mark_date=mark_date,
+                short_expiration=short_expiration,
+                current_short_strike=current_short_strike,
+                spot_mark=spot_mark,
+            )
+            if replacement is None:
+                continue
+            new_short_strike, new_short_close = replacement
+            adjusted_entry_debit += current_short_mark - new_short_close
+            roll_count = 1
+            roll_date = mark_date
+            roll_from_strike = current_short_strike
+            roll_to_strike = new_short_strike
+            roll_net_debit = current_short_mark - new_short_close
+            current_short_strike = new_short_strike
+
+    if final_mark is None:
+        spread_mark = float(trade_row["spread_mark"])
+        pnl = spread_mark - adjusted_entry_debit
+        roi_pct = None if adjusted_entry_debit <= 0 else (pnl / adjusted_entry_debit) * 100.0
+        return _build_output_row(
+            trade_row=trade_row,
+            policy_label=policy_label,
+            exit_date=short_expiration,
+            exit_reason="expiration",
+            entry_debit=adjusted_entry_debit,
+            spread_mark=spread_mark,
+            pnl=pnl,
+            roi_pct=roi_pct,
+            spot_close_exit=spot_by_date.get(short_expiration),
+            short_strike=current_short_strike,
+            long_strike=long_strike,
+            short_mark_method=trade_row["short_mark_method"],
+            long_mark_method=trade_row["long_mark_method"],
+            roll_count=roll_count,
+            roll_date=roll_date,
+            roll_from_strike=roll_from_strike,
+            roll_to_strike=roll_to_strike,
+            roll_net_debit=roll_net_debit,
+        )
+
+    pnl = float(final_mark["spread_mark"]) - adjusted_entry_debit
+    roi_pct = None if adjusted_entry_debit <= 0 else (pnl / adjusted_entry_debit) * 100.0
+    return _build_output_row(
+        trade_row=trade_row,
+        policy_label=policy_label,
+        exit_date=final_mark_date,
+        exit_reason="expiration",
+        entry_debit=adjusted_entry_debit,
+        spread_mark=float(final_mark["spread_mark"]),
+        pnl=pnl,
+        roi_pct=roi_pct,
+        spot_close_exit=final_spot,
+        short_strike=current_short_strike,
+        long_strike=long_strike,
+        short_mark_method=str(final_mark["short_mark_method"]),
+        long_mark_method=str(final_mark["long_mark_method"]),
+        roll_count=roll_count,
+        roll_date=roll_date,
+        roll_from_strike=roll_from_strike,
+        roll_to_strike=roll_to_strike,
+        roll_net_debit=roll_net_debit,
+    )
+
+
+def _simulate_abstain_roll_both_legs_same_week_atm_once(
+    *,
+    trade_row: dict[str, str],
+    option_rows_by_date: dict[date, dict[date, list[tp_grid.delta_grid.OptionRow]]],
+    spot_by_date: dict[date, float],
+    path_dates: list[date],
+) -> dict[str, object]:
+    policy_label = "abstain_roll_both_legs_same_week_atm_once"
+    entry_debit = float(trade_row["entry_debit"])
+    short_expiration = date.fromisoformat(trade_row["short_expiration"])
+    long_expiration = date.fromisoformat(trade_row["long_expiration"])
+    original_common_strike = float(trade_row["short_strike"])
+    current_common_strike = original_common_strike
+    if entry_debit <= 0 or trade_row["prediction"] != "abstain":
+        return _simulate_hold_to_expiry(
+            trade_row=trade_row,
+            policy_label=policy_label,
+            option_rows_by_date=option_rows_by_date,
+            spot_by_date=spot_by_date,
+            path_dates=path_dates,
+        )
+
+    adjusted_entry_debit = entry_debit
+    roll_count = 0
+    roll_date: date | None = None
+    roll_from_strike: float | None = None
+    roll_to_strike: float | None = None
+    roll_net_debit: float | None = None
+    final_mark_date = short_expiration
+    final_spot = spot_by_date.get(short_expiration)
+    final_mark = None
+
+    for mark_date in path_dates:
+        spot_mark = spot_by_date.get(mark_date)
+        if spot_mark is None:
+            continue
+        mark = _mark_position(
+            option_rows_by_date=option_rows_by_date,
+            mark_date=mark_date,
+            short_expiration=short_expiration,
+            long_expiration=long_expiration,
+            short_strike=current_common_strike,
+            long_strike=current_common_strike,
+            spot_mark=spot_mark,
+        )
+        if mark is None:
+            continue
+        final_mark_date = mark_date
+        final_spot = spot_mark
+        final_mark = mark
+        if roll_count == 0 and mark_date < short_expiration and spot_mark > current_common_strike:
+            replacement = _pick_common_calendar_roll_strike(
+                option_rows_by_date=option_rows_by_date,
+                mark_date=mark_date,
+                short_expiration=short_expiration,
+                long_expiration=long_expiration,
+                current_common_strike=current_common_strike,
+                spot_mark=spot_mark,
+            )
+            if replacement is None:
+                continue
+            new_common_strike, new_short_close, new_long_close = replacement
+            current_spread_mark = float(mark["spread_mark"])
+            new_spread_debit = new_long_close - new_short_close
+            adjusted_entry_debit += new_spread_debit - current_spread_mark
+            roll_count = 1
+            roll_date = mark_date
+            roll_from_strike = current_common_strike
+            roll_to_strike = new_common_strike
+            roll_net_debit = new_spread_debit - current_spread_mark
+            current_common_strike = new_common_strike
+
+    if final_mark is None:
+        spread_mark = float(trade_row["spread_mark"])
+        pnl = spread_mark - adjusted_entry_debit
+        roi_pct = None if adjusted_entry_debit <= 0 else (pnl / adjusted_entry_debit) * 100.0
+        return _build_output_row(
+            trade_row=trade_row,
+            policy_label=policy_label,
+            exit_date=short_expiration,
+            exit_reason="expiration",
+            entry_debit=adjusted_entry_debit,
+            spread_mark=spread_mark,
+            pnl=pnl,
+            roi_pct=roi_pct,
+            spot_close_exit=spot_by_date.get(short_expiration),
+            short_strike=current_common_strike,
+            long_strike=current_common_strike,
+            short_mark_method=trade_row["short_mark_method"],
+            long_mark_method=trade_row["long_mark_method"],
+            roll_count=roll_count,
+            roll_date=roll_date,
+            roll_from_strike=roll_from_strike,
+            roll_to_strike=roll_to_strike,
+            roll_net_debit=roll_net_debit,
+        )
+
+    pnl = float(final_mark["spread_mark"]) - adjusted_entry_debit
+    roi_pct = None if adjusted_entry_debit <= 0 else (pnl / adjusted_entry_debit) * 100.0
+    return _build_output_row(
+        trade_row=trade_row,
+        policy_label=policy_label,
+        exit_date=final_mark_date,
+        exit_reason="expiration",
+        entry_debit=adjusted_entry_debit,
+        spread_mark=float(final_mark["spread_mark"]),
+        pnl=pnl,
+        roi_pct=roi_pct,
+        spot_close_exit=final_spot,
+        short_strike=current_common_strike,
+        long_strike=current_common_strike,
+        short_mark_method=str(final_mark["short_mark_method"]),
+        long_mark_method=str(final_mark["long_mark_method"]),
+        roll_count=roll_count,
+        roll_date=roll_date,
+        roll_from_strike=roll_from_strike,
+        roll_to_strike=roll_to_strike,
+        roll_net_debit=roll_net_debit,
+    )
+
+
+def _simulate_abstain_convert_to_same_week_atm_butterfly_on_first_breach(
+    *,
+    trade_row: dict[str, str],
+    call_option_rows_by_date: dict[date, dict[date, list[tp_grid.delta_grid.OptionRow]]],
+    put_option_rows_by_date: dict[date, dict[date, list[tp_grid.delta_grid.OptionRow]]],
+    spot_by_date: dict[date, float],
+    path_dates: list[date],
+    wing_steps: int = 1,
+) -> dict[str, object]:
+    policy_label = "abstain_convert_to_same_week_atm_butterfly_on_first_breach"
+    if wing_steps != 1:
+        policy_label = f"{policy_label}_w{wing_steps}"
+    entry_debit = float(trade_row["entry_debit"])
+    short_expiration = date.fromisoformat(trade_row["short_expiration"])
+    long_expiration = date.fromisoformat(trade_row["long_expiration"])
+    original_short_strike = float(trade_row["short_strike"])
+    original_long_strike = float(trade_row.get("long_strike") or trade_row["short_strike"])
+    if entry_debit <= 0 or trade_row["prediction"] != "abstain":
+        return _simulate_hold_to_expiry(
+            trade_row=trade_row,
+            policy_label=policy_label,
+            option_rows_by_date=call_option_rows_by_date,
+            spot_by_date=spot_by_date,
+            path_dates=path_dates,
+        )
+
+    adjusted_entry_debit = entry_debit
+    roll_count = 0
+    roll_date: date | None = None
+    roll_from_strike: float | None = None
+    roll_to_strike: float | None = None
+    roll_net_debit: float | None = None
+    butterfly_contract_type = ""
+    butterfly_lower_strike: float | None = None
+    butterfly_center_strike: float | None = None
+    butterfly_upper_strike: float | None = None
+    final_mark_date = short_expiration
+    final_spot = spot_by_date.get(short_expiration)
+    final_package_mark: float | None = None
+    final_mark_method = ""
+
+    for mark_date in path_dates:
+        spot_mark = spot_by_date.get(mark_date)
+        if spot_mark is None:
+            continue
+        if roll_count == 0:
+            calendar_mark = _mark_position(
+                option_rows_by_date=call_option_rows_by_date,
+                mark_date=mark_date,
+                short_expiration=short_expiration,
+                long_expiration=long_expiration,
+                short_strike=original_short_strike,
+                long_strike=original_long_strike,
+                spot_mark=spot_mark,
+            )
+            if calendar_mark is None:
+                continue
+            final_mark_date = mark_date
+            final_spot = spot_mark
+            final_package_mark = float(calendar_mark["spread_mark"])
+            final_mark_method = "calendar:" + str(calendar_mark["short_mark_method"])
+            if mark_date >= short_expiration:
+                continue
+            breached_up = spot_mark > original_short_strike
+            breached_down = spot_mark < original_short_strike
+            if not breached_up and not breached_down:
+                continue
+            butterfly_contract_type = "call" if breached_up else "put"
+            option_rows_by_date = call_option_rows_by_date if breached_up else put_option_rows_by_date
+            expiration_map = option_rows_by_date.get(mark_date)
+            if expiration_map is None:
+                continue
+            rows_by_strike = {
+                row.strike_price: row
+                for row in expiration_map.get(short_expiration, [])
+            }
+            strikes = _pick_atm_butterfly_strikes(
+                rows_by_strike=rows_by_strike,
+                spot_mark=spot_mark,
+                wing_steps=wing_steps,
+            )
+            if strikes is None:
+                continue
+            lower_strike, center_strike, upper_strike = strikes
+            butterfly_mark = _mark_butterfly_package(
+                option_rows_by_date=option_rows_by_date,
+                mark_date=mark_date,
+                expiration=short_expiration,
+                lower_strike=lower_strike,
+                center_strike=center_strike,
+                upper_strike=upper_strike,
+                spot_mark=spot_mark,
+                contract_type=butterfly_contract_type,
+            )
+            if butterfly_mark is None:
+                continue
+            adjusted_entry_debit += float(butterfly_mark["package_mark"]) - float(calendar_mark["spread_mark"])
+            roll_count = 1
+            roll_date = mark_date
+            roll_from_strike = original_short_strike
+            roll_to_strike = center_strike
+            roll_net_debit = float(butterfly_mark["package_mark"]) - float(calendar_mark["spread_mark"])
+            butterfly_lower_strike = lower_strike
+            butterfly_center_strike = center_strike
+            butterfly_upper_strike = upper_strike
+            final_package_mark = float(butterfly_mark["package_mark"])
+            final_mark_method = str(butterfly_mark["mark_method"])
+        else:
+            option_rows_by_date = call_option_rows_by_date if butterfly_contract_type == "call" else put_option_rows_by_date
+            butterfly_mark = _mark_butterfly_package(
+                option_rows_by_date=option_rows_by_date,
+                mark_date=mark_date,
+                expiration=short_expiration,
+                lower_strike=butterfly_lower_strike,
+                center_strike=butterfly_center_strike,
+                upper_strike=butterfly_upper_strike,
+                spot_mark=spot_mark,
+                contract_type=butterfly_contract_type,
+            )
+            if butterfly_mark is None:
+                continue
+            final_mark_date = mark_date
+            final_spot = spot_mark
+            final_package_mark = float(butterfly_mark["package_mark"])
+            final_mark_method = str(butterfly_mark["mark_method"])
+
+    if final_package_mark is None:
+        spread_mark = float(trade_row["spread_mark"])
+        pnl = spread_mark - adjusted_entry_debit
+        roi_pct = None if adjusted_entry_debit <= 0 else (pnl / adjusted_entry_debit) * 100.0
+        return _build_output_row(
+            trade_row=trade_row,
+            policy_label=policy_label,
+            exit_date=short_expiration,
+            exit_reason="expiration",
+            entry_debit=adjusted_entry_debit,
+            spread_mark=spread_mark,
+            pnl=pnl,
+            roi_pct=roi_pct,
+            spot_close_exit=spot_by_date.get(short_expiration),
+            short_strike=roll_to_strike if roll_count > 0 else original_short_strike,
+            long_strike=roll_to_strike if roll_count > 0 else original_long_strike,
+            short_mark_method=final_mark_method or trade_row["short_mark_method"],
+            long_mark_method=final_mark_method or trade_row["long_mark_method"],
+            roll_count=roll_count,
+            roll_date=roll_date,
+            roll_from_strike=roll_from_strike,
+            roll_to_strike=roll_to_strike,
+            roll_net_debit=roll_net_debit,
+        )
+
+    pnl = final_package_mark - adjusted_entry_debit
+    roi_pct = None if adjusted_entry_debit <= 0 else (pnl / adjusted_entry_debit) * 100.0
+    center_strike = roll_to_strike if roll_count > 0 else original_short_strike
+    return _build_output_row(
+        trade_row=trade_row,
+        policy_label=policy_label,
+        exit_date=final_mark_date,
+        exit_reason="expiration",
+        entry_debit=adjusted_entry_debit,
+        spread_mark=final_package_mark,
+        pnl=pnl,
+        roi_pct=roi_pct,
+        spot_close_exit=final_spot,
+        short_strike=center_strike,
+        long_strike=center_strike,
+        short_mark_method=final_mark_method or trade_row["short_mark_method"],
+        long_mark_method=final_mark_method or trade_row["long_mark_method"],
+        roll_count=roll_count,
+        roll_date=roll_date,
+        roll_from_strike=roll_from_strike,
+        roll_to_strike=roll_to_strike,
+        roll_net_debit=roll_net_debit,
+    )
+
+
+def _simulate_abstain_convert_to_same_week_credit_spread_on_first_breach(
+    *,
+    trade_row: dict[str, str],
+    call_option_rows_by_date: dict[date, dict[date, list[tp_grid.delta_grid.OptionRow]]],
+    put_option_rows_by_date: dict[date, dict[date, list[tp_grid.delta_grid.OptionRow]]],
+    spot_by_date: dict[date, float],
+    path_dates: list[date],
+    target_abs_delta_pct: int,
+    width_steps: int,
+) -> dict[str, object]:
+    policy_label = (
+        f"abstain_convert_to_same_week_credit_spread_on_first_breach_d{target_abs_delta_pct}_w{width_steps}"
+    )
+    original_entry_debit = float(trade_row["entry_debit"])
+    short_expiration = date.fromisoformat(trade_row["short_expiration"])
+    long_expiration = date.fromisoformat(trade_row["long_expiration"])
+    original_short_strike = float(trade_row["short_strike"])
+    original_long_strike = float(trade_row.get("long_strike") or trade_row["short_strike"])
+    if original_entry_debit <= 0 or trade_row["prediction"] != "abstain":
+        return _simulate_hold_to_expiry(
+            trade_row=trade_row,
+            policy_label=policy_label,
+            option_rows_by_date=call_option_rows_by_date,
+            spot_by_date=spot_by_date,
+            path_dates=path_dates,
+        )
+
+    adjusted_entry_debit = original_entry_debit
+    realized_calendar_pnl = 0.0
+    credit_entry_mark: float | None = None
+    credit_contract_type = ""
+    credit_short_strike: float | None = None
+    credit_long_strike: float | None = None
+    roll_count = 0
+    roll_date: date | None = None
+    roll_from_strike: float | None = None
+    roll_to_strike: float | None = None
+    roll_net_debit: float | None = None
+    final_mark_date = short_expiration
+    final_spot = spot_by_date.get(short_expiration)
+    final_total_pnl: float | None = None
+    final_synthetic_mark: float | None = None
+    final_mark_method = ""
+
+    for mark_date in path_dates:
+        spot_mark = spot_by_date.get(mark_date)
+        if spot_mark is None:
+            continue
+        if roll_count == 0:
+            calendar_mark = _mark_position(
+                option_rows_by_date=call_option_rows_by_date,
+                mark_date=mark_date,
+                short_expiration=short_expiration,
+                long_expiration=long_expiration,
+                short_strike=original_short_strike,
+                long_strike=original_long_strike,
+                spot_mark=spot_mark,
+            )
+            if calendar_mark is None:
+                continue
+            realized_calendar_pnl = float(calendar_mark["spread_mark"]) - original_entry_debit
+            final_mark_date = mark_date
+            final_spot = spot_mark
+            final_total_pnl = realized_calendar_pnl
+            final_synthetic_mark = adjusted_entry_debit + final_total_pnl
+            final_mark_method = "calendar:" + str(calendar_mark["short_mark_method"])
+            if mark_date >= short_expiration:
+                continue
+            breached_up = spot_mark > original_short_strike
+            breached_down = spot_mark < original_short_strike
+            if not breached_up and not breached_down:
+                continue
+            credit_contract_type = "call" if breached_up else "put"
+            option_rows_by_date = call_option_rows_by_date if breached_up else put_option_rows_by_date
+            expiration_map = option_rows_by_date.get(mark_date)
+            if expiration_map is None:
+                continue
+            rows_by_strike = {
+                row.strike_price: row
+                for row in expiration_map.get(short_expiration, [])
+            }
+            picked = _pick_credit_spread_strikes_by_delta(
+                rows_by_strike=rows_by_strike,
+                spot_mark=spot_mark,
+                trade_date=mark_date,
+                expiration=short_expiration,
+                contract_type=credit_contract_type,
+                target_abs_delta=target_abs_delta_pct / 100.0,
+                width_steps=width_steps,
+            )
+            if picked is None:
+                continue
+            selected_short_strike, selected_long_strike = picked
+            credit_mark = _mark_vertical_credit_package(
+                option_rows_by_date=option_rows_by_date,
+                mark_date=mark_date,
+                expiration=short_expiration,
+                short_strike=selected_short_strike,
+                long_strike=selected_long_strike,
+                spot_mark=spot_mark,
+                contract_type=credit_contract_type,
+            )
+            if credit_mark is None:
+                continue
+            entry_credit = float(credit_mark["entry_credit"])
+            width_value = float(credit_mark["width_value"])
+            additional_risk = max(width_value - entry_credit, 0.0)
+            adjusted_entry_debit = original_entry_debit + additional_risk
+            credit_entry_mark = float(credit_mark["package_mark"])
+            roll_count = 1
+            roll_date = mark_date
+            roll_from_strike = original_short_strike
+            roll_to_strike = selected_short_strike
+            roll_net_debit = float(credit_mark["package_mark"]) - float(calendar_mark["spread_mark"])
+            credit_short_strike = selected_short_strike
+            credit_long_strike = selected_long_strike
+            final_total_pnl = realized_calendar_pnl
+            final_synthetic_mark = adjusted_entry_debit + final_total_pnl
+            final_mark_method = str(credit_mark["mark_method"])
+        else:
+            option_rows_by_date = call_option_rows_by_date if credit_contract_type == "call" else put_option_rows_by_date
+            credit_mark = _mark_vertical_credit_package(
+                option_rows_by_date=option_rows_by_date,
+                mark_date=mark_date,
+                expiration=short_expiration,
+                short_strike=credit_short_strike,
+                long_strike=credit_long_strike,
+                spot_mark=spot_mark,
+                contract_type=credit_contract_type,
+            )
+            if credit_mark is None:
+                continue
+            credit_pnl = float(credit_mark["package_mark"]) - float(credit_entry_mark)
+            final_mark_date = mark_date
+            final_spot = spot_mark
+            final_total_pnl = realized_calendar_pnl + credit_pnl
+            final_synthetic_mark = adjusted_entry_debit + final_total_pnl
+            final_mark_method = str(credit_mark["mark_method"])
+
+    if final_total_pnl is None or final_synthetic_mark is None:
+        spread_mark = float(trade_row["spread_mark"])
+        pnl = spread_mark - adjusted_entry_debit
+        roi_pct = None if adjusted_entry_debit <= 0 else (pnl / adjusted_entry_debit) * 100.0
+        return _build_output_row(
+            trade_row=trade_row,
+            policy_label=policy_label,
+            exit_date=short_expiration,
+            exit_reason="expiration",
+            entry_debit=adjusted_entry_debit,
+            spread_mark=spread_mark,
+            pnl=pnl,
+            roi_pct=roi_pct,
+            spot_close_exit=spot_by_date.get(short_expiration),
+            short_strike=credit_short_strike if roll_count > 0 and credit_short_strike is not None else original_short_strike,
+            long_strike=credit_long_strike if roll_count > 0 and credit_long_strike is not None else original_long_strike,
+            short_mark_method=final_mark_method or trade_row["short_mark_method"],
+            long_mark_method=final_mark_method or trade_row["long_mark_method"],
+            roll_count=roll_count,
+            roll_date=roll_date,
+            roll_from_strike=roll_from_strike,
+            roll_to_strike=roll_to_strike,
+            roll_net_debit=roll_net_debit,
+        )
+
+    roi_pct = None if adjusted_entry_debit <= 0 else (final_total_pnl / adjusted_entry_debit) * 100.0
+    return _build_output_row(
+        trade_row=trade_row,
+        policy_label=policy_label,
+        exit_date=final_mark_date,
+        exit_reason="expiration",
+        entry_debit=adjusted_entry_debit,
+        spread_mark=final_synthetic_mark,
+        pnl=final_total_pnl,
+        roi_pct=roi_pct,
+        spot_close_exit=final_spot,
+        short_strike=credit_short_strike if roll_count > 0 and credit_short_strike is not None else original_short_strike,
+        long_strike=credit_long_strike if roll_count > 0 and credit_long_strike is not None else original_long_strike,
+        short_mark_method=final_mark_method or trade_row["short_mark_method"],
+        long_mark_method=final_mark_method or trade_row["long_mark_method"],
+        roll_count=roll_count,
+        roll_date=roll_date,
+        roll_from_strike=roll_from_strike,
+        roll_to_strike=roll_to_strike,
+        roll_net_debit=roll_net_debit,
+    )
+
+
+def _simulate_abstain_roll_short_forward_one_week_on_first_breach(
+    *,
+    trade_row: dict[str, str],
+    option_rows_by_date: dict[date, dict[date, list[tp_grid.delta_grid.OptionRow]]],
+    spot_by_date: dict[date, float],
+    path_dates: list[date],
+    strike_steps: int,
+) -> dict[str, object]:
+    policy_label = f"abstain_roll_short_forward_one_week_on_first_breach_up{strike_steps}"
+    entry_debit = float(trade_row["entry_debit"])
+    original_short_expiration = date.fromisoformat(trade_row["short_expiration"])
+    current_short_expiration = original_short_expiration
+    long_expiration = date.fromisoformat(trade_row["long_expiration"])
+    original_short_strike = float(trade_row["short_strike"])
+    current_short_strike = original_short_strike
+    long_strike = original_short_strike
+    if entry_debit <= 0 or trade_row["prediction"] != "abstain":
+        return _simulate_hold_to_expiry(
+            trade_row=trade_row,
+            policy_label=policy_label,
+            option_rows_by_date=option_rows_by_date,
+            spot_by_date=spot_by_date,
+            path_dates=path_dates,
+        )
+
+    adjusted_entry_debit = entry_debit
+    roll_count = 0
+    roll_date: date | None = None
+    roll_from_strike: float | None = None
+    roll_to_strike: float | None = None
+    roll_net_debit: float | None = None
+    final_mark_date = original_short_expiration
+    final_spot = spot_by_date.get(original_short_expiration)
+    final_mark = None
+
+    for mark_date in path_dates:
+        if roll_count == 0 and mark_date > original_short_expiration:
+            continue
+        spot_mark = spot_by_date.get(mark_date)
+        if spot_mark is None:
+            continue
+        mark = _mark_position(
+            option_rows_by_date=option_rows_by_date,
+            mark_date=mark_date,
+            short_expiration=current_short_expiration,
+            long_expiration=long_expiration,
+            short_strike=current_short_strike,
+            long_strike=long_strike,
+            spot_mark=spot_mark,
+        )
+        if mark is None:
+            continue
+        final_mark_date = mark_date
+        final_spot = spot_mark
+        final_mark = mark
+        if (
+            roll_count == 0
+            and mark_date < original_short_expiration
+            and spot_mark > current_short_strike
+        ):
+            current_short_mark = float(mark["short_mark"])
+            replacement = _pick_roll_short_strike_steps_above(
+                option_rows_by_date=option_rows_by_date,
+                mark_date=mark_date,
+                expiration_date=long_expiration,
+                current_short_strike=current_short_strike,
+                strike_steps=strike_steps,
+            )
+            if replacement is None:
+                continue
+            new_short_strike, new_short_close = replacement
+            adjusted_entry_debit += current_short_mark - new_short_close
+            roll_count = 1
+            roll_date = mark_date
+            roll_from_strike = current_short_strike
+            roll_to_strike = new_short_strike
+            roll_net_debit = current_short_mark - new_short_close
+            current_short_strike = new_short_strike
+            current_short_expiration = long_expiration
+
+    if final_mark is None:
+        spread_mark = float(trade_row["spread_mark"])
+        pnl = spread_mark - adjusted_entry_debit
+        roi_pct = None if adjusted_entry_debit <= 0 else (pnl / adjusted_entry_debit) * 100.0
+        exit_date = long_expiration if roll_count > 0 else original_short_expiration
+        return _build_output_row(
+            trade_row=trade_row,
+            policy_label=policy_label,
+            exit_date=exit_date,
+            exit_reason="expiration",
+            entry_debit=adjusted_entry_debit,
+            spread_mark=spread_mark,
+            pnl=pnl,
+            roi_pct=roi_pct,
+            spot_close_exit=spot_by_date.get(exit_date),
             short_strike=current_short_strike,
             long_strike=long_strike,
             short_mark_method=trade_row["short_mark_method"],

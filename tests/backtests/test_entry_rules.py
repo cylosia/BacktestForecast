@@ -60,6 +60,17 @@ class StubGateway:
     def get_quote(self, option_ticker, trade_date):
         return OptionQuoteRecord(trade_date=trade_date, bid_price=2.0, ask_price=2.0, participant_timestamp=None)
 
+    def get_quotes(self, option_tickers, trade_date):
+        return {
+            option_ticker: OptionQuoteRecord(
+                trade_date=trade_date,
+                bid_price=2.0,
+                ask_price=2.0,
+                participant_timestamp=None,
+            )
+            for option_ticker in option_tickers
+        }
+
 
 def _build_evaluator(
     closes: list[float],
@@ -384,6 +395,23 @@ def test_build_estimated_iv_series_does_not_forward_fill_missing_quotes(monkeypa
     )
 
     assert series == [0.25, None, 0.30]
+
+
+def test_estimate_atm_iv_for_date_uses_batched_quotes_when_available() -> None:
+    class BatchedOnlyGateway(StubGateway):
+        def get_quote(self, option_ticker, trade_date):  # pragma: no cover - this is the failure path under test
+            raise AssertionError("estimate_atm_iv_for_date should use get_quotes when available")
+
+    iv = rules_mod.estimate_atm_iv_for_date(
+        trade_date=date(2025, 1, 3),
+        underlying_close=100.0,
+        option_gateway=BatchedOnlyGateway(iv_values=[0.2]),
+        target_dte=30,
+        dte_tolerance_days=10,
+    )
+
+    assert iv is not None
+    assert iv > 0
 
 
 # ---------------------------------------------------------------------------
