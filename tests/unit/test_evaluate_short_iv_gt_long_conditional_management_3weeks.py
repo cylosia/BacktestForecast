@@ -17,7 +17,7 @@ def test_best_combined_policy_label_points_to_preferred_filtered_variant() -> No
     )
     assert (
         module.BEST_COMBINED_PORTFOLIO_POLICY_LABEL
-        == module.BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN3_WORST_METHOD_SKIP_METHOD_CAP12_PNL_OVER_DEBIT_15_MIN5_POLICY_LABEL
+        == module.BEST_COMBINED_SOURCE_BASKET_CLOSE_70_POLICY_LABEL
     )
     assert (
         module.BEST_COMBINED_PORTFOLIO_LIVE_POLICY_LABEL
@@ -317,6 +317,87 @@ def test_is_vix_weekly_change_within_threshold_uses_absolute_change() -> None:
     assert module._is_vix_weekly_change_within_threshold(weekly_change_pct=-20.1, threshold_pct=20.0) is False
     assert module._is_vix_weekly_change_within_threshold(weekly_change_pct=None, threshold_pct=20.0) is None
     assert module._is_vix_weekly_change_within_threshold(weekly_change_pct=5.0, threshold_pct=None) is None
+
+
+def test_build_parser_accepts_min_short_over_long_iv_premium_pct() -> None:
+    args = module.build_parser().parse_args(["--min-short-over-long-iv-premium-pct", "10"])
+    assert args.min_short_over_long_iv_premium_pct == 10.0
+
+
+def test_entry_atm_iv_metrics_returns_common_atm_iv_premium(monkeypatch) -> None:
+    def fake_estimate_call_iv_pct(
+        *,
+        option_price: float,
+        spot_price: float,
+        strike_price: float,
+        trade_date: date,
+        expiration_date: date,
+    ) -> float:
+        assert spot_price == 100.0
+        assert strike_price == 100.0
+        return option_price * 10.0
+
+    monkeypatch.setattr(module.tp_grid.delta_grid, "_estimate_call_iv_pct", fake_estimate_call_iv_pct)
+
+    trade_row = {
+        "entry_date": "2025-01-03",
+        "short_expiration": "2025-01-10",
+        "long_expiration": "2025-01-17",
+        "spot_close_entry": "100.0",
+    }
+    option_rows_by_date = {
+        date(2025, 1, 3): {
+            date(2025, 1, 10): [
+                module.tp_grid.delta_grid.OptionRow("short99", date(2025, 1, 3), date(2025, 1, 10), 99.0, 4.0),
+                module.tp_grid.delta_grid.OptionRow("short100", date(2025, 1, 3), date(2025, 1, 10), 100.0, 5.0),
+                module.tp_grid.delta_grid.OptionRow("short101", date(2025, 1, 3), date(2025, 1, 10), 101.0, 4.5),
+            ],
+            date(2025, 1, 17): [
+                module.tp_grid.delta_grid.OptionRow("long100", date(2025, 1, 3), date(2025, 1, 17), 100.0, 4.0),
+                module.tp_grid.delta_grid.OptionRow("long101", date(2025, 1, 3), date(2025, 1, 17), 101.0, 3.5),
+            ],
+        }
+    }
+
+    short_iv_pct, long_iv_pct, premium_pct = module._entry_atm_iv_metrics(
+        trade_row=trade_row,
+        option_rows_by_date=option_rows_by_date,
+    )
+
+    assert short_iv_pct == 50.0
+    assert long_iv_pct == 40.0
+    assert premium_pct == 25.0
+
+
+def test_with_condition_metadata_marks_iv_premium_threshold_condition() -> None:
+    enriched = module._with_condition_metadata(
+        {"entry_date": "2025-01-03", "policy_label": "base"},
+        short_entry_iv_pct=42.0,
+        short_atm_entry_iv_pct=45.0,
+        long_atm_entry_iv_pct=40.0,
+        short_over_long_atm_iv_premium_pct=12.5,
+        vix_snapshot=None,
+        vix_max_weekly_change_up_pct=20.0,
+        min_short_over_long_iv_premium_pct=10.0,
+        condition_debit_gt_1_5=True,
+        condition_short_iv_gt_100=False,
+        condition_short_iv_gt_110=False,
+        condition_short_iv_gt_130=False,
+        condition_abstain_debit_gt_5_0_iv_35_50=False,
+        condition_abstain_debit_gt_2_0_iv_40_45=False,
+        condition_abstain_debit_gt_3_0_iv_55_65=False,
+        condition_abstain_debit_gt_2_5_iv_55_80=False,
+        condition_abstain_piecewise_moderate_iv=False,
+        condition_abstain_midhigh_iv_tested_exit=False,
+        condition_up_debit_gt_5_5=False,
+        condition_up_short_iv_lt_40=False,
+        management_applied=False,
+    )
+
+    assert enriched["short_atm_entry_iv_pct"] == 45.0
+    assert enriched["long_atm_entry_iv_pct"] == 40.0
+    assert enriched["short_over_long_atm_iv_premium_pct"] == 12.5
+    assert enriched["condition_short_over_long_atm_iv_premium_ge_threshold"] == 1
 
 
 def test_derive_symbol_side_lookback_filtered_rows_uses_side_specific_base_history() -> None:
@@ -1740,6 +1821,100 @@ def test_derive_targeted_replacement_policy_rows_preserves_existing_position_siz
     assert replaced["roi_pct"] == -75.0
     assert filtered[1]["symbol"] == "BBB"
     assert filtered[1]["entry_debit"] == 1.0
+
+
+def test_derive_weekly_basket_close_policy_rows_reprices_triggered_week(monkeypatch) -> None:
+    rows = [
+        {
+            "entry_date": "2025-01-10",
+            "symbol": "AAA",
+            "prediction": "abstain",
+            "policy_label": module.BEST_COMBINED_METHOD_SIDE_EXIT_POLICY_LABEL,
+            "selected_method": "mlgb76",
+            "best_delta_target_pct": 50,
+            "short_expiration": "2025-01-17",
+            "long_expiration": "2025-01-24",
+            "short_strike": 100.0,
+            "long_strike": 100.0,
+            "entry_debit": 2.0,
+            "original_entry_debit": 2.0,
+            "spread_mark": 1.0,
+            "pnl": -1.0,
+            "roi_pct": -50.0,
+            "exit_date": "2025-01-17",
+            "exit_reason": "expiration",
+            "holding_days_calendar": 7,
+            "position_size_weight": 1.0,
+            "position_sizing_rule": "",
+            "short_mark_method": "exact",
+            "long_mark_method": "exact",
+            "roll_count": 0,
+        },
+        {
+            "entry_date": "2025-01-10",
+            "symbol": "BBB",
+            "prediction": "abstain",
+            "policy_label": module.BEST_COMBINED_METHOD_SIDE_EXIT_POLICY_LABEL,
+            "selected_method": "mlgb76",
+            "best_delta_target_pct": 50,
+            "short_expiration": "2025-01-17",
+            "long_expiration": "2025-01-24",
+            "short_strike": 100.0,
+            "long_strike": 100.0,
+            "entry_debit": 2.0,
+            "original_entry_debit": 2.0,
+            "spread_mark": 1.0,
+            "pnl": -1.0,
+            "roi_pct": -50.0,
+            "exit_date": "2025-01-17",
+            "exit_reason": "expiration",
+            "holding_days_calendar": 7,
+            "position_size_weight": 1.0,
+            "position_sizing_rule": "",
+            "short_mark_method": "exact",
+            "long_mark_method": "exact",
+            "roll_count": 0,
+        },
+    ]
+
+    def fake_load_symbol_path_cache(session, *, symbol, trades):
+        return (
+            {date(2025, 1, 13): 100.0},
+            {},
+            {(trades[0]["entry_date"], symbol, trades[0]["prediction"]): [date(2025, 1, 13)]},
+        )
+
+    def fake_mark_position(**kwargs):
+        if kwargs["short_strike"] == 100.0:
+            return {
+                "short_mark": 0.0,
+                "long_mark": 3.5,
+                "spread_mark": 3.5,
+                "short_mark_method": "exact",
+                "long_mark_method": "exact",
+            }
+        return None
+
+    monkeypatch.setattr(module.mgmt, "_load_symbol_path_cache", fake_load_symbol_path_cache)
+    monkeypatch.setattr(module.mgmt, "_mark_position", fake_mark_position)
+
+    derived = module._derive_weekly_basket_close_policy_rows(
+        rows=rows,
+        source_policy_label=module.BEST_COMBINED_METHOD_SIDE_EXIT_POLICY_LABEL,
+        derived_policy_label=module.BEST_COMBINED_SOURCE_BASKET_CLOSE_70_POLICY_LABEL,
+        threshold_pct=70.0,
+        session=None,
+    )
+
+    assert len(derived) == 2
+    for row in derived:
+        assert row["policy_label"] == module.BEST_COMBINED_SOURCE_BASKET_CLOSE_70_POLICY_LABEL
+        assert row["exit_date"] == "2025-01-13"
+        assert row["exit_reason"] == "basket_close_70"
+        assert row["holding_days_calendar"] == 3
+        assert row["spread_mark"] == 3.5
+        assert row["pnl"] == 1.5
+        assert row["roi_pct"] == 75.0
 
 
 def test_trade_identity_key_uses_roll_from_strike_for_rolled_rows() -> None:

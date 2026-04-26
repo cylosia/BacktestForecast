@@ -452,6 +452,73 @@ def _write_summary_csv(*, rows: list[dict[str, object]], path: Path) -> None:
             writer.writerow({name: row.get(name) for name in fieldnames})
 
 
+def _persist_worker_result(
+    *,
+    item: SymbolRun,
+    worker_result: dict[str, object],
+    args: argparse.Namespace,
+) -> dict[str, object]:
+    if worker_result["status"] == "completed":
+        payload = worker_result["payload"]
+        _write_payload(item.output_path, payload)
+        _write_payload(item.cache_path, payload)
+        _write_symbol_log(
+            log_path=item.log_path,
+            symbol=item.symbol,
+            status="completed",
+            started_at=str(worker_result["started_at"]),
+            elapsed_seconds=float(worker_result["elapsed_seconds"]),
+            details=[
+                f"CACHE_WRITTEN: {str(item.cache_path.relative_to(ROOT)).replace('\\', '/')}",
+                f"SELECTED_METHOD: {str(payload.get('selected_method'))}",
+            ],
+        )
+        return _summary_row_from_payload(
+            payload=payload,
+            output_path=item.output_path,
+            log_path=item.log_path,
+            elapsed_seconds=float(worker_result["elapsed_seconds"]),
+            status="completed",
+        )
+
+    _write_symbol_log(
+        log_path=item.log_path,
+        symbol=item.symbol,
+        status="failed",
+        started_at=str(worker_result["started_at"]),
+        elapsed_seconds=float(worker_result["elapsed_seconds"]),
+        details=[
+            f"ERROR: {str(worker_result.get('error') or '')}",
+            "",
+            str(worker_result.get("traceback") or ""),
+        ],
+    )
+    return {
+        "symbol": item.symbol,
+        "status": "failed",
+        "requested_start_date": args.start_date.isoformat(),
+        "requested_end_date": args.end_date.isoformat(),
+        "horizon_bars": args.horizon_bars,
+        "prediction_method": args.prediction_method,
+        "output_path": str(item.output_path.relative_to(ROOT)).replace("\\", "/"),
+        "log_path": str(item.log_path.relative_to(ROOT)).replace("\\", "/"),
+        "elapsed_seconds": float(worker_result["elapsed_seconds"]),
+        "returncode": int(worker_result.get("returncode") or 1),
+    }
+
+
+def _run_pending_serial(
+    *,
+    pending_runs: list[SymbolRun],
+    worker_config: WorkerConfig,
+) -> list[tuple[SymbolRun, dict[str, object]]]:
+    _worker_initialize(worker_config)
+    return [
+        (item, _evaluate_symbol_in_worker(item.symbol))
+        for item in pending_runs
+    ]
+
+
 def main() -> int:
     args = _parse_args()
     if not args.database_url:
@@ -556,68 +623,31 @@ def main() -> int:
             warmup_calendar_days=args.warmup_calendar_days,
             prediction_method=args.prediction_method,
         )
-        with ProcessPoolExecutor(
-            max_workers=args.max_workers,
-            initializer=_worker_initialize,
-            initargs=(worker_config,),
-        ) as executor:
-            futures = {
-                executor.submit(_evaluate_symbol_in_worker, item.symbol): item
-                for item in pending_runs
-            }
-            for future in as_completed(futures):
-                item = futures[future]
-                worker_result = future.result()
-                if worker_result["status"] == "completed":
-                    payload = worker_result["payload"]
-                    _write_payload(item.output_path, payload)
-                    _write_payload(item.cache_path, payload)
-                    _write_symbol_log(
-                        log_path=item.log_path,
-                        symbol=item.symbol,
-                        status="completed",
-                        started_at=str(worker_result["started_at"]),
-                        elapsed_seconds=float(worker_result["elapsed_seconds"]),
-                        details=[
-                            f"CACHE_WRITTEN: {str(item.cache_path.relative_to(ROOT)).replace('\\', '/')}",
-                            f"SELECTED_METHOD: {str(payload.get('selected_method'))}",
-                        ],
-                    )
-                    row = _summary_row_from_payload(
-                        payload=payload,
-                        output_path=item.output_path,
-                        log_path=item.log_path,
-                        elapsed_seconds=float(worker_result["elapsed_seconds"]),
-                        status="completed",
-                    )
-                else:
-                    _write_symbol_log(
-                        log_path=item.log_path,
-                        symbol=item.symbol,
-                        status="failed",
-                        started_at=str(worker_result["started_at"]),
-                        elapsed_seconds=float(worker_result["elapsed_seconds"]),
-                        details=[
-                            f"ERROR: {str(worker_result.get('error') or '')}",
-                            "",
-                            str(worker_result.get("traceback") or ""),
-                        ],
-                    )
-                    row = {
-                        "symbol": item.symbol,
-                        "status": "failed",
-                        "requested_start_date": args.start_date.isoformat(),
-                        "requested_end_date": args.end_date.isoformat(),
-                        "horizon_bars": args.horizon_bars,
-                        "prediction_method": args.prediction_method,
-                        "output_path": str(item.output_path.relative_to(ROOT)).replace("\\", "/"),
-                        "log_path": str(item.log_path.relative_to(ROOT)).replace("\\", "/"),
-                        "elapsed_seconds": float(worker_result["elapsed_seconds"]),
-                        "returncode": int(worker_result.get("returncode") or 1),
-                    }
-                results.append(row)
-                _append_jsonl(status_jsonl, row)
-                print(json.dumps(row, sort_keys=True))
+        if args.max_workers <= 1:
+            item_results = _run_pending_serial(
+                pending_runs=pending_runs,
+                worker_config=worker_config,
+            )
+        else:
+            with ProcessPoolExecutor(
+                max_workers=args.max_workers,
+                initializer=_worker_initialize,
+                initargs=(worker_config,),
+            ) as executor:
+                futures = {
+                    executor.submit(_evaluate_symbol_in_worker, item.symbol): item
+                    for item in pending_runs
+                }
+                item_results = [
+                    (futures[future], future.result())
+                    for future in as_completed(futures)
+                ]
+
+        for item, worker_result in item_results:
+            row = _persist_worker_result(item=item, worker_result=worker_result, args=args)
+            results.append(row)
+            _append_jsonl(status_jsonl, row)
+            print(json.dumps(row, sort_keys=True))
 
     results.sort(key=lambda item: str(item["symbol"]))
     _write_summary_csv(rows=results, path=summary_csv)

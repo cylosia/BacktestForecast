@@ -41,7 +41,11 @@ DEFAULT_ENTRY_END_DATE = date.fromisoformat("2026-04-10")
 DEFAULT_SHORT_DTE_MAX = 10
 DEFAULT_GAP_DTE_MAX = 10
 DEFAULT_MAX_WORKERS = 4
-SYMBOL_RESULT_CACHE_SCHEMA_VERSION = 1
+DEFAULT_ENTRY_WEEKDAY = 4
+DEFAULT_ENTRY_WEEKDAY_NAME = "Friday"
+DEFAULT_SHORT_EXPIRATION_DTE_TARGETS: tuple[int, ...] = ()
+DEFAULT_LONG_EXPIRATION_DTE_TARGETS: tuple[int, ...] = ()
+SYMBOL_RESULT_CACHE_SCHEMA_VERSION = 3
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,7 +92,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--entry-dates",
         default="",
-        help="Optional comma-separated explicit entry dates. If omitted, Fridays in the requested date range are used.",
+        help=(
+            "Optional comma-separated explicit entry dates. If omitted, "
+            f"{DEFAULT_ENTRY_WEEKDAY_NAME}s in the requested date range are used."
+        ),
+    )
+    parser.add_argument(
+        "--entry-weekday",
+        type=int,
+        default=DEFAULT_ENTRY_WEEKDAY,
+        help="Entry weekday when --entry-dates is omitted, where Monday=0 and Sunday=6.",
     )
     parser.add_argument(
         "--delta-targets",
@@ -106,6 +119,22 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=DEFAULT_GAP_DTE_MAX,
         help="Maximum days between short and long expirations. Defaults to 10.",
+    )
+    parser.add_argument(
+        "--short-expiration-dte-targets",
+        default=",".join(str(value) for value in DEFAULT_SHORT_EXPIRATION_DTE_TARGETS),
+        help=(
+            "Optional comma-separated allowed DTEs for the short expiration. "
+            "If omitted, the first expiration after entry is used."
+        ),
+    )
+    parser.add_argument(
+        "--long-expiration-dte-targets",
+        default=",".join(str(value) for value in DEFAULT_LONG_EXPIRATION_DTE_TARGETS),
+        help=(
+            "Optional comma-separated allowed DTEs for the long expiration. "
+            "If omitted, the second expiration after entry is used."
+        ),
     )
     parser.add_argument(
         "--database-url",
@@ -154,6 +183,15 @@ def _parse_delta_targets(raw_value: str) -> tuple[int, ...]:
     values = tuple(int(chunk.strip()) for chunk in raw_value.split(",") if chunk.strip())
     if not values:
         raise SystemExit("--delta-targets must contain at least one integer.")
+    return values
+
+
+def _parse_optional_int_targets(raw_value: str) -> tuple[int, ...]:
+    if not raw_value.strip():
+        return ()
+    values = tuple(int(chunk.strip()) for chunk in raw_value.split(",") if chunk.strip())
+    if any(value < 1 for value in values):
+        raise SystemExit("DTE targets must be positive integers.")
     return values
 
 
@@ -303,30 +341,83 @@ def _mark_call_leg(
     return max(adjusted, 0.0), f"nearest_strike_intrinsic_adjusted({nearest_strike})"
 
 
+def _has_earnings_before_short_expiration(
+    *,
+    entry_date: date,
+    short_expiration: date,
+    earnings_dates: set[date] | None,
+) -> bool:
+    if not earnings_dates:
+        return False
+    return any(entry_date <= earnings_date < short_expiration for earnings_date in earnings_dates)
+
+
+def _select_expiration_pair(
+    *,
+    entry_date: date,
+    expirations: list[date],
+    short_expiration_dte_targets: tuple[int, ...],
+    long_expiration_dte_targets: tuple[int, ...],
+) -> tuple[date, date] | None:
+    if not short_expiration_dte_targets and not long_expiration_dte_targets:
+        if len(expirations) < 2:
+            return None
+        return expirations[0], expirations[1]
+
+    short_target_set = set(short_expiration_dte_targets)
+    long_target_set = set(long_expiration_dte_targets)
+    for short_expiration in expirations:
+        short_dte = (short_expiration - entry_date).days
+        if short_target_set and short_dte not in short_target_set:
+            continue
+        for long_expiration in expirations:
+            if long_expiration <= short_expiration:
+                continue
+            long_dte = (long_expiration - entry_date).days
+            if long_target_set and long_dte not in long_target_set:
+                continue
+            return short_expiration, long_expiration
+    return None
+
+
 def _select_weekly_calendar_candidates(
     *,
     symbol: str,
-    friday_dates: list[date],
+    entry_dates: list[date],
     spot_by_date: dict[date, float],
     option_rows_by_date: dict[date, dict[date, list[OptionRow]]],
     short_dte_max: int,
     gap_dte_max: int,
+    short_expiration_dte_targets: tuple[int, ...] = DEFAULT_SHORT_EXPIRATION_DTE_TARGETS,
+    long_expiration_dte_targets: tuple[int, ...] = DEFAULT_LONG_EXPIRATION_DTE_TARGETS,
+    earnings_dates: set[date] | None = None,
 ) -> list[WeeklyCalendarCandidate]:
     candidates: list[WeeklyCalendarCandidate] = []
-    for entry_date in friday_dates:
+    for entry_date in entry_dates:
         expiration_map = option_rows_by_date.get(entry_date)
         if not expiration_map:
             continue
         expirations = sorted(expiration for expiration in expiration_map if expiration > entry_date)
-        if len(expirations) < 2:
+        expiration_pair = _select_expiration_pair(
+            entry_date=entry_date,
+            expirations=expirations,
+            short_expiration_dte_targets=short_expiration_dte_targets,
+            long_expiration_dte_targets=long_expiration_dte_targets,
+        )
+        if expiration_pair is None:
             continue
-        short_expiration = expirations[0]
-        long_expiration = expirations[1]
+        short_expiration, long_expiration = expiration_pair
         short_dte = (short_expiration - entry_date).days
         gap_dte = (long_expiration - short_expiration).days
         if short_dte < 1 or short_dte > short_dte_max:
             continue
         if gap_dte < 1 or gap_dte > gap_dte_max:
+            continue
+        if _has_earnings_before_short_expiration(
+            entry_date=entry_date,
+            short_expiration=short_expiration,
+            earnings_dates=earnings_dates,
+        ):
             continue
         short_rows = [row for row in expiration_map[short_expiration] if row.close_price > 0]
         long_rows = [row for row in expiration_map[long_expiration] if row.close_price > 0]
@@ -582,8 +673,11 @@ def _symbol_cache_metadata(
     entry_start_date: date,
     entry_end_date: date,
     explicit_entry_dates: set[date],
+    entry_weekday: int,
     short_dte_max: int,
     gap_dte_max: int,
+    short_expiration_dte_targets: tuple[int, ...],
+    long_expiration_dte_targets: tuple[int, ...],
     delta_targets: tuple[int, ...],
 ) -> dict[str, object]:
     return {
@@ -593,8 +687,11 @@ def _symbol_cache_metadata(
         "entry_start_date": entry_start_date.isoformat(),
         "entry_end_date": entry_end_date.isoformat(),
         "explicit_entry_dates": [value.isoformat() for value in sorted(explicit_entry_dates)],
+        "entry_weekday": entry_weekday,
         "short_dte_max": short_dte_max,
         "gap_dte_max": gap_dte_max,
+        "short_expiration_dte_targets": list(short_expiration_dte_targets),
+        "long_expiration_dte_targets": list(long_expiration_dte_targets),
         "delta_targets": list(delta_targets),
     }
 
@@ -651,8 +748,11 @@ def _evaluate_symbol(
     entry_start_date: date,
     entry_end_date: date,
     explicit_entry_dates: set[date],
+    entry_weekday: int,
     short_dte_max: int,
     gap_dte_max: int,
+    short_expiration_dte_targets: tuple[int, ...],
+    long_expiration_dte_targets: tuple[int, ...],
     delta_targets: tuple[int, ...],
 ) -> SymbolEvaluationResult | None:
     with factory() as session:
@@ -674,7 +774,7 @@ def _evaluate_symbol(
             bar.trade_date: float(bar.close_price)
             for bar in bars
         }
-        friday_dates = [
+        entry_dates = [
             bar.trade_date
             for bar in bars
             if (
@@ -685,22 +785,31 @@ def _evaluate_symbol(
                 or (
                     not explicit_entry_dates
                     and entry_start_date <= bar.trade_date <= entry_end_date
-                    and bar.trade_date.weekday() == 4
+                    and bar.trade_date.weekday() == entry_weekday
                 )
             )
         ]
         entry_option_rows_by_date = _load_option_rows_for_dates(
             session,
             symbol=symbol,
-            trade_dates=set(friday_dates),
+            trade_dates=set(entry_dates),
+        )
+        candidate_earnings_dates = pwm._load_earnings_dates(
+            session,
+            symbol=symbol,
+            start_date=entry_start_date,
+            end_date=entry_end_date + timedelta(days=short_dte_max),
         )
         weekly_candidates = _select_weekly_calendar_candidates(
             symbol=symbol,
-            friday_dates=friday_dates,
+            entry_dates=entry_dates,
             spot_by_date=spot_by_date,
             option_rows_by_date=entry_option_rows_by_date,
             short_dte_max=short_dte_max,
             gap_dte_max=gap_dte_max,
+            short_expiration_dte_targets=short_expiration_dte_targets,
+            long_expiration_dte_targets=long_expiration_dte_targets,
+            earnings_dates=candidate_earnings_dates,
         )
         if not weekly_candidates:
             return SymbolEvaluationResult(
@@ -899,7 +1008,7 @@ def _evaluate_symbol(
         weekly_candidate_rows=weekly_candidate_rows,
         detail_rows=detail_rows,
         status_message=(
-            f"{symbol}: built predictions for {len(requested_dates)} filtered Fridays using {method_name}; "
+            f"{symbol}: built predictions for {len(requested_dates)} filtered entry dates using {method_name}; "
             f"produced {len(detail_rows)} trade rows"
         ),
     )
@@ -911,7 +1020,11 @@ def main() -> int:
         raise SystemExit("--entry-start-date must be <= --entry-end-date.")
     if args.max_workers < 1:
         raise SystemExit("--max-workers must be >= 1.")
+    if args.entry_weekday < 0 or args.entry_weekday > 6:
+        raise SystemExit("--entry-weekday must be between 0 and 6.")
     delta_targets = _parse_delta_targets(args.delta_targets)
+    short_expiration_dte_targets = _parse_optional_int_targets(args.short_expiration_dte_targets)
+    long_expiration_dte_targets = _parse_optional_int_targets(args.long_expiration_dte_targets)
     explicit_entry_dates = _parse_entry_dates(args.entry_dates)
     database_url = _load_database_url(args.database_url)
     symbols = _load_symbols(args.symbols_file, limit=args.limit_symbols)
@@ -946,8 +1059,11 @@ def main() -> int:
                     entry_start_date=args.entry_start_date,
                     entry_end_date=args.entry_end_date,
                     explicit_entry_dates=explicit_entry_dates,
+                    entry_weekday=args.entry_weekday,
                     short_dte_max=args.short_dte_max,
                     gap_dte_max=args.gap_dte_max,
+                    short_expiration_dte_targets=short_expiration_dte_targets,
+                    long_expiration_dte_targets=long_expiration_dte_targets,
                     delta_targets=delta_targets,
                 )
                 cached = _load_cached_symbol_result(cache_dir=symbol_cache_dir, metadata=metadata)
@@ -965,8 +1081,11 @@ def main() -> int:
                     entry_start_date=args.entry_start_date,
                     entry_end_date=args.entry_end_date,
                     explicit_entry_dates=explicit_entry_dates,
+                    entry_weekday=args.entry_weekday,
                     short_dte_max=args.short_dte_max,
                     gap_dte_max=args.gap_dte_max,
+                    short_expiration_dte_targets=short_expiration_dte_targets,
+                    long_expiration_dte_targets=long_expiration_dte_targets,
                     delta_targets=delta_targets,
                 )
                 if result is None:
@@ -986,8 +1105,11 @@ def main() -> int:
                         entry_start_date=args.entry_start_date,
                         entry_end_date=args.entry_end_date,
                         explicit_entry_dates=explicit_entry_dates,
+                        entry_weekday=args.entry_weekday,
                         short_dte_max=args.short_dte_max,
                         gap_dte_max=args.gap_dte_max,
+                        short_expiration_dte_targets=short_expiration_dte_targets,
+                        long_expiration_dte_targets=long_expiration_dte_targets,
                         delta_targets=delta_targets,
                     )
                     cached = _load_cached_symbol_result(cache_dir=symbol_cache_dir, metadata=metadata)
@@ -1005,8 +1127,11 @@ def main() -> int:
                         entry_start_date=args.entry_start_date,
                         entry_end_date=args.entry_end_date,
                         explicit_entry_dates=explicit_entry_dates,
+                        entry_weekday=args.entry_weekday,
                         short_dte_max=args.short_dte_max,
                         gap_dte_max=args.gap_dte_max,
+                        short_expiration_dte_targets=short_expiration_dte_targets,
+                        long_expiration_dte_targets=long_expiration_dte_targets,
                         delta_targets=delta_targets,
                     )
                     future_to_symbol[future] = (index, symbol, metadata)

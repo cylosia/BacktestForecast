@@ -239,3 +239,57 @@ def test_evaluate_symbol_in_worker_uses_shared_worker_config(monkeypatch) -> Non
     assert evaluate_calls
     assert result["status"] == "completed"
     assert result["payload"]["symbol"] == "AAPL"
+
+
+def test_run_pending_serial_initializes_once_and_evaluates_each_symbol(monkeypatch) -> None:
+    config = module.WorkerConfig(
+        database_url="postgresql://example",
+        db_statement_timeout_ms=30000,
+        start_date=module.date(2024, 1, 1),
+        end_date=module.date(2026, 4, 17),
+        horizon_bars=5,
+        max_analogs=None,
+        min_candidate_count=60,
+        min_spacing_bars=5,
+        warmup_calendar_days=120,
+        prediction_method="auto",
+    )
+    initialized: list[module.WorkerConfig] = []
+    evaluated: list[str] = []
+    pending = [
+        module.SymbolRun(
+            symbol="AAPL",
+            output_path=module.ROOT / "logs" / "batch" / "weekly_price_movement" / "serial" / "results" / "aapl.json",
+            log_path=module.ROOT / "logs" / "batch" / "weekly_price_movement" / "serial" / "logs" / "aapl.log",
+            cache_path=module.ROOT / "logs" / "batch" / "weekly_price_movement" / "_cache" / "results" / "aapl.json",
+        ),
+        module.SymbolRun(
+            symbol="MSFT",
+            output_path=module.ROOT / "logs" / "batch" / "weekly_price_movement" / "serial" / "results" / "msft.json",
+            log_path=module.ROOT / "logs" / "batch" / "weekly_price_movement" / "serial" / "logs" / "msft.log",
+            cache_path=module.ROOT / "logs" / "batch" / "weekly_price_movement" / "_cache" / "results" / "msft.json",
+        ),
+    ]
+
+    monkeypatch.setattr(module, "_worker_initialize", lambda worker_config: initialized.append(worker_config))
+    monkeypatch.setattr(
+        module,
+        "_evaluate_symbol_in_worker",
+        lambda symbol: evaluated.append(symbol)
+        or {
+            "symbol": symbol,
+            "status": "completed",
+            "started_at": "2026-04-22T12:00:00",
+            "elapsed_seconds": 0.123,
+            "payload": {"symbol": symbol, "evaluation": {}, "parameters": {}},
+        },
+    )
+
+    item_results = module._run_pending_serial(
+        pending_runs=pending,
+        worker_config=config,
+    )
+
+    assert initialized == [config]
+    assert evaluated == ["AAPL", "MSFT"]
+    assert [item.symbol for item, _ in item_results] == ["AAPL", "MSFT"]

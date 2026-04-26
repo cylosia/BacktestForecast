@@ -20,6 +20,7 @@ if str(ROOT) not in sys.path:
 from backtestforecast.market_data.historical_store import HistoricalMarketDataStore
 from backtestforecast.market_data import vix_regime
 from backtestforecast.models import HistoricalOptionDayBar
+from backtestforecast.backtests.strategies.common import choose_atm_strike
 
 import scripts.compare_short_iv_gt_long_management_rules_3weeks as mgmt
 import scripts.evaluate_short_iv_gt_long_calendar_take_profit_grid as tp_grid
@@ -135,6 +136,9 @@ BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN3_WORST_METHOD_SKIP_METHOD_CAP12_PNL_OV
     f"{BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN3_WORST_METHOD_SKIP_METHOD_CAP12_POLICY_LABEL}"
     "__pnl_over_debit_15_min5"
 )
+BEST_COMBINED_SOURCE_BASKET_CLOSE_70_POLICY_LABEL = (
+    f"{BEST_COMBINED_METHOD_SIDE_EXIT_POLICY_LABEL}__basket_close_70"
+)
 BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN3_WORST_METHOD_SKIP_VIX_ABS_GT_10_HALF_SIZE_POLICY_LABEL = (
     f"{BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN3_WORST_METHOD_SKIP_POLICY_LABEL}"
     "__vix_abs_weekly_change_gt_10_half_size"
@@ -176,10 +180,8 @@ BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MINUS_NEGATIVE_P25_MIN3_POLICY_LABEL = (
 )
 # Preferred downstream alias for the current combined policy.
 BEST_COMBINED_POLICY_LABEL = BEST_COMBINED_METHOD_SIDE_EXIT_POLICY_LABEL
-# Preferred ranked/capped portfolio variant after drawdown comparison.
-BEST_COMBINED_PORTFOLIO_POLICY_LABEL = (
-    BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN3_WORST_METHOD_SKIP_METHOD_CAP12_PNL_OVER_DEBIT_15_MIN5_POLICY_LABEL
-)
+# Preferred portfolio variant after the ivpremium10/source retest.
+BEST_COMBINED_PORTFOLIO_POLICY_LABEL = BEST_COMBINED_SOURCE_BASKET_CLOSE_70_POLICY_LABEL
 BEST_COMBINED_PORTFOLIO_LIVE_POLICY_LABEL = f"{BEST_COMBINED_PORTFOLIO_POLICY_LABEL}_live"
 MLGBP72_ABSTAIN_FIRST_BREACH_POLICY_LABEL = "abstain_mlgbp72_first_breach_exit"
 MLGBP72_ABSTAIN_LAST_PRE_EXPIRATION_NEGATIVE_POLICY_LABEL = (
@@ -255,6 +257,9 @@ DEFAULT_TOP43_ABSTAIN_CAP = 29
 DEFAULT_TOP43_METHOD_CAP = 12
 DEFAULT_LOOKBACK_PNL_OVER_DEBIT_THRESHOLD_PCT = 15.0
 DEFAULT_LOOKBACK_PNL_OVER_DEBIT_MIN_HISTORY_TRADES = 5
+DEFAULT_BASKET_CLOSE_THRESHOLD_PCT = 70.0
+DEFAULT_VIX_MAX_WEEKLY_CHANGE_UP_PCT: float | None = None
+DEFAULT_MIN_SHORT_OVER_LONG_IV_PREMIUM_PCT: float | None = None
 TIGHT_METHOD_CAPS_10_10_2 = {"mlgbp72": 10, "mlgb76": 10, "median40rsi": 2}
 TIGHT_METHOD_CAPS_9_10_2 = {"mlgbp72": 9, "mlgb76": 10, "median40rsi": 2}
 DEFAULT_SOFT_VIX_HALF_SIZE_THRESHOLD_PCT = 10.0
@@ -322,7 +327,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--vix-max-weekly-change-up-pct",
         type=float,
-        default=None,
+        default=DEFAULT_VIX_MAX_WEEKLY_CHANGE_UP_PCT,
         help="Optional entry-week filter. Skip all trades for weeks where the absolute VIX weekly change exceeds this percent versus the prior entry week.",
     )
     parser.add_argument(
@@ -335,6 +340,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--disable-vix-cache-refresh",
         action="store_true",
         help="Use only existing DB/cache VIX data and do not auto-refresh the cache from FRED.",
+    )
+    parser.add_argument(
+        "--min-short-over-long-iv-premium-pct",
+        type=float,
+        default=DEFAULT_MIN_SHORT_OVER_LONG_IV_PREMIUM_PCT,
+        help=(
+            "Optional minimum ATM IV premium filter. Skip trades unless short ATM IV is at least "
+            "this percent above long ATM IV at entry."
+        ),
     )
     parser.add_argument("--selected-trades-csv", type=Path, default=DEFAULT_SELECTED_TRADES_CSV)
     parser.add_argument("--output-trades-csv", type=Path, default=DEFAULT_OUTPUT_TRADES_CSV)
@@ -535,12 +549,62 @@ def _short_entry_iv_pct(
     )
 
 
+def _entry_atm_iv_metrics(
+    *,
+    trade_row: dict[str, str],
+    option_rows_by_date: dict[date, dict[date, list[tp_grid.delta_grid.OptionRow]]],
+) -> tuple[float | None, float | None, float | None]:
+    entry_date = date.fromisoformat(trade_row["entry_date"])
+    short_expiration = date.fromisoformat(trade_row["short_expiration"])
+    long_expiration = date.fromisoformat(trade_row["long_expiration"])
+    spot_close_entry = float(trade_row["spot_close_entry"])
+    expiration_map = option_rows_by_date.get(entry_date)
+    if expiration_map is None or spot_close_entry <= 0:
+        return None, None, None
+    short_rows = [row for row in expiration_map.get(short_expiration, []) if float(row.close_price) > 0]
+    long_rows = [row for row in expiration_map.get(long_expiration, []) if float(row.close_price) > 0]
+    if not short_rows or not long_rows:
+        return None, None, None
+    short_rows_by_strike = {float(row.strike_price): row for row in short_rows}
+    long_rows_by_strike = {float(row.strike_price): row for row in long_rows}
+    common_strikes = sorted(set(short_rows_by_strike).intersection(long_rows_by_strike))
+    if not common_strikes:
+        return None, None, None
+    common_atm_strike = float(choose_atm_strike(common_strikes, spot_close_entry))
+    short_row = short_rows_by_strike.get(common_atm_strike)
+    long_row = long_rows_by_strike.get(common_atm_strike)
+    if short_row is None or long_row is None:
+        return None, None, None
+    short_atm_iv_pct = tp_grid.delta_grid._estimate_call_iv_pct(
+        option_price=float(short_row.close_price),
+        spot_price=spot_close_entry,
+        strike_price=common_atm_strike,
+        trade_date=entry_date,
+        expiration_date=short_expiration,
+    )
+    long_atm_iv_pct = tp_grid.delta_grid._estimate_call_iv_pct(
+        option_price=float(long_row.close_price),
+        spot_price=spot_close_entry,
+        strike_price=common_atm_strike,
+        trade_date=entry_date,
+        expiration_date=long_expiration,
+    )
+    if short_atm_iv_pct is None or long_atm_iv_pct is None or long_atm_iv_pct <= 0:
+        return short_atm_iv_pct, long_atm_iv_pct, None
+    short_over_long_atm_iv_premium_pct = ((short_atm_iv_pct - long_atm_iv_pct) / long_atm_iv_pct) * 100.0
+    return short_atm_iv_pct, long_atm_iv_pct, short_over_long_atm_iv_premium_pct
+
+
 def _with_condition_metadata(
     row: dict[str, object],
     *,
     short_entry_iv_pct: float | None,
+    short_atm_entry_iv_pct: float | None,
+    long_atm_entry_iv_pct: float | None,
+    short_over_long_atm_iv_premium_pct: float | None,
     vix_snapshot: vix_regime.VixWeeklyChangeSnapshot | None,
     vix_max_weekly_change_up_pct: float | None,
+    min_short_over_long_iv_premium_pct: float | None,
     condition_debit_gt_1_5: bool,
     condition_short_iv_gt_100: bool,
     condition_short_iv_gt_110: bool,
@@ -559,6 +623,9 @@ def _with_condition_metadata(
     enriched["source_short_strike"] = row.get("source_short_strike", "")
     enriched["source_long_strike"] = row.get("source_long_strike", "")
     enriched["short_entry_iv_pct"] = _round_or_none(short_entry_iv_pct)
+    enriched["short_atm_entry_iv_pct"] = _round_or_none(short_atm_entry_iv_pct)
+    enriched["long_atm_entry_iv_pct"] = _round_or_none(long_atm_entry_iv_pct)
+    enriched["short_over_long_atm_iv_premium_pct"] = _round_or_none(short_over_long_atm_iv_premium_pct)
     enriched["vix_effective_trade_date"] = "" if vix_snapshot is None else vix_snapshot.effective_trade_date.isoformat()
     enriched["vix_close_entry"] = None if vix_snapshot is None else _round_or_none(vix_snapshot.close_price)
     enriched["vix_prior_entry_date"] = (
@@ -602,6 +669,11 @@ def _with_condition_metadata(
     enriched["condition_up_short_iv_lt_40"] = int(condition_up_short_iv_lt_40)
     enriched["condition_up_debit_and_short_iv_lt_40"] = int(
         condition_up_debit_gt_5_5 and condition_up_short_iv_lt_40
+    )
+    enriched["condition_short_over_long_atm_iv_premium_ge_threshold"] = (
+        ""
+        if min_short_over_long_iv_premium_pct is None or short_over_long_atm_iv_premium_pct is None
+        else int(short_over_long_atm_iv_premium_pct >= min_short_over_long_iv_premium_pct)
     )
     enriched["management_applied"] = int(management_applied)
     enriched["position_size_weight"] = 1.0
@@ -1469,6 +1541,111 @@ def _derive_targeted_replacement_policy_rows(
     return derived_rows
 
 
+def _derive_weekly_basket_close_policy_rows(
+    *,
+    rows: list[dict[str, object]],
+    source_policy_label: str,
+    derived_policy_label: str,
+    threshold_pct: float,
+    session: Session,
+) -> list[dict[str, object]]:
+    source_rows = [dict(row) for row in rows if str(row["policy_label"]) == source_policy_label]
+    source_rows.sort(key=lambda row: (str(row["entry_date"]), str(row["symbol"]), str(row["prediction"])))
+    if not source_rows:
+        return []
+
+    rows_by_symbol: dict[str, list[dict[str, object]]] = defaultdict(list)
+    for row in source_rows:
+        rows_by_symbol[str(row["symbol"])].append(row)
+
+    marked_rows_by_trade_and_date: dict[tuple[object, ...], dict[str, object]] = {}
+    basket_marks_by_week_date: dict[tuple[str, str], list[tuple[float, float]]] = defaultdict(list)
+
+    for symbol, symbol_rows in sorted(rows_by_symbol.items()):
+        spot_by_date, option_rows_by_date, path_dates_by_trade = mgmt._load_symbol_path_cache(
+            session,
+            symbol=symbol,
+            trades=symbol_rows,
+        )
+        for row in symbol_rows:
+            entry_date_text = str(row["entry_date"])
+            trade_key = _trade_identity_key(row)
+            path_key = (entry_date_text, str(row["symbol"]), str(row["prediction"]))
+            path_dates = path_dates_by_trade.get(path_key, [])
+            entry_date = date.fromisoformat(entry_date_text)
+            short_expiration = date.fromisoformat(str(row["short_expiration"]))
+            long_expiration = date.fromisoformat(str(row["long_expiration"]))
+            short_strike = float(row["short_strike"])
+            long_strike = float(row["long_strike"])
+            position_size_weight = _to_float(
+                None if row.get("position_size_weight") in (None, "") else str(row.get("position_size_weight"))
+            )
+            if position_size_weight is None:
+                position_size_weight = 1.0
+            entry_debit = float(row["entry_debit"])
+            for mark_date in path_dates:
+                spot_mark = spot_by_date.get(mark_date)
+                if spot_mark is None:
+                    continue
+                mark = mgmt._mark_position(
+                    option_rows_by_date=option_rows_by_date,
+                    mark_date=mark_date,
+                    short_expiration=short_expiration,
+                    long_expiration=long_expiration,
+                    short_strike=short_strike,
+                    long_strike=long_strike,
+                    spot_mark=spot_mark,
+                )
+                if mark is None:
+                    continue
+                scaled_spread_mark = float(mark["spread_mark"]) * position_size_weight
+                pnl = scaled_spread_mark - entry_debit
+                roi_pct = None if entry_debit <= 0 else (pnl / entry_debit) * 100.0
+                marked_rows_by_trade_and_date[(trade_key, mark_date.isoformat())] = {
+                    "policy_label": derived_policy_label,
+                    "exit_date": mark_date.isoformat(),
+                    "spread_mark": _round_or_none(scaled_spread_mark),
+                    "pnl": _round_or_none(pnl),
+                    "roi_pct": _round_or_none(roi_pct),
+                    "exit_reason": f"basket_close_{threshold_pct:g}",
+                    "holding_days_calendar": (mark_date - entry_date).days,
+                    "short_mark_method": mark["short_mark_method"],
+                    "long_mark_method": mark["long_mark_method"],
+                }
+                if entry_debit > 0:
+                    basket_marks_by_week_date[(entry_date_text, mark_date.isoformat())].append((entry_debit, pnl))
+
+    trigger_date_by_week: dict[str, str] = {}
+    week_dates = sorted({entry_date_text for entry_date_text, _ in basket_marks_by_week_date})
+    for entry_date_text in week_dates:
+        candidate_dates = sorted(
+            trade_date_text
+            for week_text, trade_date_text in basket_marks_by_week_date
+            if week_text == entry_date_text
+        )
+        for trade_date_text in candidate_dates:
+            marks = basket_marks_by_week_date[(entry_date_text, trade_date_text)]
+            total_debit = sum(entry_debit for entry_debit, _ in marks)
+            if total_debit <= 0:
+                continue
+            total_pnl = sum(pnl for _, pnl in marks)
+            if (total_pnl / total_debit) * 100.0 >= threshold_pct:
+                trigger_date_by_week[entry_date_text] = trade_date_text
+                break
+
+    derived_rows: list[dict[str, object]] = []
+    for row in source_rows:
+        candidate = dict(row)
+        candidate["policy_label"] = derived_policy_label
+        trigger_date_text = trigger_date_by_week.get(str(row["entry_date"]))
+        if trigger_date_text is not None:
+            override = marked_rows_by_trade_and_date.get((_trade_identity_key(row), trigger_date_text))
+            if override is not None:
+                candidate.update(override)
+        derived_rows.append(candidate)
+    return derived_rows
+
+
 def _derive_stress_method_half_size_policy_rows(
     *,
     rows: list[dict[str, object]],
@@ -1522,6 +1699,7 @@ def main() -> int:
     detail_rows: list[dict[str, object]] = []
     spot_filtered_out_by_week_prediction: dict[tuple[str, str], list[str]] = defaultdict(list)
     vix_filtered_out_by_week_prediction: dict[tuple[str, str], list[str]] = defaultdict(list)
+    iv_premium_filtered_out_by_week_prediction: dict[tuple[str, str], list[str]] = defaultdict(list)
     spot_cache: dict[tuple[str, str], float | None] = {}
     symbol_cache: dict[
         str,
@@ -1611,6 +1789,20 @@ def main() -> int:
                     path_dates=path_dates,
                 )
                 short_iv_pct = _short_entry_iv_pct(trade_row=trade_row, option_rows_by_date=option_rows_by_date)
+                (
+                    short_atm_iv_pct,
+                    long_atm_iv_pct,
+                    short_over_long_atm_iv_premium_pct,
+                ) = _entry_atm_iv_metrics(trade_row=trade_row, option_rows_by_date=option_rows_by_date)
+                if (
+                    args.min_short_over_long_iv_premium_pct is not None
+                    and (
+                        short_over_long_atm_iv_premium_pct is None
+                        or short_over_long_atm_iv_premium_pct < args.min_short_over_long_iv_premium_pct
+                    )
+                ):
+                    iv_premium_filtered_out_by_week_prediction[(entry_date_text, prediction)].append(symbol)
+                    continue
                 vix_snapshot = vix_snapshots_by_entry_date.get(entry_date)
                 entry_debit = float(trade_row["entry_debit"])
                 condition_debit_gt_1_5 = prediction == "abstain" and float(trade_row["entry_debit"]) > 1.5
@@ -1659,8 +1851,12 @@ def main() -> int:
                     _with_condition_metadata(
                         hold_row,
                         short_entry_iv_pct=short_iv_pct,
+                        short_atm_entry_iv_pct=short_atm_iv_pct,
+                        long_atm_entry_iv_pct=long_atm_iv_pct,
+                        short_over_long_atm_iv_premium_pct=short_over_long_atm_iv_premium_pct,
                         vix_snapshot=vix_snapshot,
                         vix_max_weekly_change_up_pct=args.vix_max_weekly_change_up_pct,
+                        min_short_over_long_iv_premium_pct=args.min_short_over_long_iv_premium_pct,
                         condition_debit_gt_1_5=condition_debit_gt_1_5,
                         condition_short_iv_gt_100=condition_short_iv_gt_100,
                         condition_short_iv_gt_110=condition_short_iv_gt_110,
@@ -1787,6 +1983,30 @@ def main() -> int:
                     take_profit_pct=75.0,
                     stop_loss_pct=65.0,
                 )
+                base_abstain_tp_stop_row = (
+                    tp25_row
+                    if (DEFAULT_ABSTAIN_TAKE_PROFIT_PCT, DEFAULT_ABSTAIN_STOP_LOSS_PCT) == (25.0, 35.0)
+                    else mgmt._simulate_tp_stop(
+                        trade_row=trade_row,
+                        option_rows_by_date=option_rows_by_date,
+                        spot_by_date=spot_by_date,
+                        path_dates=path_dates,
+                        take_profit_pct=DEFAULT_ABSTAIN_TAKE_PROFIT_PCT,
+                        stop_loss_pct=DEFAULT_ABSTAIN_STOP_LOSS_PCT,
+                    )
+                )
+                base_up_tp_stop_row = (
+                    up_tp75_stop65_row
+                    if (DEFAULT_UP_TAKE_PROFIT_PCT, DEFAULT_UP_STOP_LOSS_PCT) == (75.0, 65.0)
+                    else mgmt._simulate_tp_stop(
+                        trade_row=trade_row,
+                        option_rows_by_date=option_rows_by_date,
+                        spot_by_date=spot_by_date,
+                        path_dates=path_dates,
+                        take_profit_pct=DEFAULT_UP_TAKE_PROFIT_PCT,
+                        stop_loss_pct=DEFAULT_UP_STOP_LOSS_PCT,
+                    )
+                )
                 abstain_method_side_override_rows = {
                     method: mgmt._simulate_tp_stop(
                         trade_row=trade_row,
@@ -1801,7 +2021,7 @@ def main() -> int:
                 method_side_abstain_row = _select_abstain_method_side_exit_row(
                     prediction=prediction,
                     selected_method=str(trade_row["selected_method"]),
-                    default_row=tp25_row,
+                    default_row=base_abstain_tp_stop_row,
                     override_rows_by_method=abstain_method_side_override_rows,
                 )
                 condition_abstain_high_iv_or_piecewise_moderate_iv = (
@@ -1890,8 +2110,12 @@ def main() -> int:
                             _with_condition_metadata(
                                 candidate,
                                 short_entry_iv_pct=short_iv_pct,
+                                short_atm_entry_iv_pct=short_atm_iv_pct,
+                                long_atm_entry_iv_pct=long_atm_iv_pct,
+                                short_over_long_atm_iv_premium_pct=short_over_long_atm_iv_premium_pct,
                                 vix_snapshot=vix_snapshot,
                                 vix_max_weekly_change_up_pct=args.vix_max_weekly_change_up_pct,
+                                min_short_over_long_iv_premium_pct=args.min_short_over_long_iv_premium_pct,
                                 condition_debit_gt_1_5=condition_debit_gt_1_5,
                                 condition_short_iv_gt_100=condition_short_iv_gt_100,
                                 condition_short_iv_gt_110=condition_short_iv_gt_110,
@@ -1995,7 +2219,7 @@ def main() -> int:
                     ),
                     (
                         BASE_BEST_COMBINED_POLICY_LABEL,
-                        tp25_row if prediction == "abstain" else up_tp75_stop65_row,
+                        base_abstain_tp_stop_row if prediction == "abstain" else base_up_tp_stop_row,
                         (
                             (
                                 prediction == "abstain"
@@ -2010,7 +2234,7 @@ def main() -> int:
                     ),
                     (
                         BASE_BEST_COMBINED_METHOD_SIDE_EXIT_POLICY_LABEL,
-                        method_side_abstain_row if prediction == "abstain" else up_tp75_stop65_row,
+                        method_side_abstain_row if prediction == "abstain" else base_up_tp_stop_row,
                         (
                             (
                                 prediction == "abstain"
@@ -2037,8 +2261,12 @@ def main() -> int:
                         _with_condition_metadata(
                             candidate,
                             short_entry_iv_pct=short_iv_pct,
+                            short_atm_entry_iv_pct=short_atm_iv_pct,
+                            long_atm_entry_iv_pct=long_atm_iv_pct,
+                            short_over_long_atm_iv_premium_pct=short_over_long_atm_iv_premium_pct,
                             vix_snapshot=vix_snapshot,
                             vix_max_weekly_change_up_pct=args.vix_max_weekly_change_up_pct,
+                            min_short_over_long_iv_premium_pct=args.min_short_over_long_iv_premium_pct,
                             condition_debit_gt_1_5=condition_debit_gt_1_5,
                             condition_short_iv_gt_100=condition_short_iv_gt_100,
                             condition_short_iv_gt_110=condition_short_iv_gt_110,
@@ -2268,6 +2496,21 @@ def main() -> int:
             min_pnl_over_debit_pct=DEFAULT_LOOKBACK_PNL_OVER_DEBIT_THRESHOLD_PCT,
         )
     )
+    engine = create_engine(mgmt._load_database_url())
+    SessionLocal = sessionmaker(bind=engine)
+    try:
+        with SessionLocal() as session:
+            detail_rows.extend(
+                _derive_weekly_basket_close_policy_rows(
+                    rows=detail_rows,
+                    source_policy_label=BEST_COMBINED_METHOD_SIDE_EXIT_POLICY_LABEL,
+                    derived_policy_label=BEST_COMBINED_SOURCE_BASKET_CLOSE_70_POLICY_LABEL,
+                    threshold_pct=DEFAULT_BASKET_CLOSE_THRESHOLD_PCT,
+                    session=session,
+                )
+            )
+    finally:
+        engine.dispose()
     detail_rows.extend(
         _derive_targeted_replacement_policy_rows(
             rows=detail_rows,
@@ -2552,6 +2795,12 @@ def main() -> int:
         summary = _summarize_rows(rows)
         spot_filtered_symbols = sorted(set(spot_filtered_out_by_week_prediction[(entry_date_text, prediction)]))
         vix_filtered_symbols = sorted(set(vix_filtered_out_by_week_prediction[(entry_date_text, prediction)]))
+        iv_premium_filtered_symbols = sorted(
+            set(iv_premium_filtered_out_by_week_prediction[(entry_date_text, prediction)])
+        )
+        filtered_symbols = sorted(
+            set(spot_filtered_symbols).union(vix_filtered_symbols).union(iv_premium_filtered_symbols)
+        )
         return {
             "entry_date": entry_date_text,
             "prediction": prediction,
@@ -2559,12 +2808,15 @@ def main() -> int:
             **summary,
             "spot_filter_max_entry": args.max_spot_entry,
             "vix_max_weekly_change_up_pct": args.vix_max_weekly_change_up_pct,
-            "filtered_out_symbol_count": len(sorted(set(spot_filtered_symbols).union(vix_filtered_symbols))),
-            "filtered_out_symbols": ", ".join(sorted(set(spot_filtered_symbols).union(vix_filtered_symbols))),
+            "min_short_over_long_iv_premium_pct": args.min_short_over_long_iv_premium_pct,
+            "filtered_out_symbol_count": len(filtered_symbols),
+            "filtered_out_symbols": ", ".join(filtered_symbols),
             "spot_filtered_out_symbol_count": len(spot_filtered_symbols),
             "spot_filtered_out_symbols": ", ".join(spot_filtered_symbols),
             "vix_filtered_out_symbol_count": len(vix_filtered_symbols),
             "vix_filtered_out_symbols": ", ".join(vix_filtered_symbols),
+            "iv_premium_filtered_out_symbol_count": len(iv_premium_filtered_symbols),
+            "iv_premium_filtered_out_symbols": ", ".join(iv_premium_filtered_symbols),
         }
 
     for (entry_date_text, prediction, policy_label), rows in sorted(grouped.items()):
@@ -2578,8 +2830,10 @@ def main() -> int:
         )
 
     for entry_date_text, prediction in selected_entry_prediction_groups:
-        filtered_symbols = set(spot_filtered_out_by_week_prediction[(entry_date_text, prediction)]).union(
-            vix_filtered_out_by_week_prediction[(entry_date_text, prediction)]
+        filtered_symbols = (
+            set(spot_filtered_out_by_week_prediction[(entry_date_text, prediction)])
+            .union(vix_filtered_out_by_week_prediction[(entry_date_text, prediction)])
+            .union(iv_premium_filtered_out_by_week_prediction[(entry_date_text, prediction)])
         )
         if not filtered_symbols:
             continue
@@ -2606,12 +2860,15 @@ def main() -> int:
                 **summary,
                 "spot_filter_max_entry": args.max_spot_entry,
                 "vix_max_weekly_change_up_pct": args.vix_max_weekly_change_up_pct,
+                "min_short_over_long_iv_premium_pct": args.min_short_over_long_iv_premium_pct,
                 "filtered_out_symbol_count": "",
                 "filtered_out_symbols": "",
                 "spot_filtered_out_symbol_count": "",
                 "spot_filtered_out_symbols": "",
                 "vix_filtered_out_symbol_count": "",
                 "vix_filtered_out_symbols": "",
+                "iv_premium_filtered_out_symbol_count": "",
+                "iv_premium_filtered_out_symbols": "",
             }
         )
 
