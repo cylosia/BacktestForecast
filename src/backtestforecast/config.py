@@ -101,6 +101,18 @@ class Settings(BaseSettings):
     backtest_prefetch_max_dates: int = Field(default=6, ge=1, le=252)
     backtest_prefetch_timeout_seconds: int = Field(default=45, ge=10, le=3600)
 
+    schwab_app_key: str | None = Field(default=None, repr=False)
+    schwab_app_secret: str | None = Field(default=None, repr=False)
+    schwab_redirect_uri: str | None = None
+    schwab_base_url: str = "https://api.schwabapi.com"
+    schwab_auth_base_url: str = "https://api.schwabapi.com"
+    schwab_timeout_seconds: float = 30.0
+    schwab_trading_enabled: bool = False
+    schwab_token_path_live: str | None = Field(default=None, repr=False)
+    schwab_token_path_paper: str | None = Field(default=None, repr=False)
+    schwab_account_hash_live: str | None = Field(default=None, repr=False)
+    schwab_account_hash_paper: str | None = Field(default=None, repr=False)
+
     # Nightly pipeline - override via PIPELINE_DEFAULT_SYMBOLS_CSV env var
     pipeline_default_symbols_csv: str | None = None
     pipeline_default_symbols: list[str] = [
@@ -397,7 +409,13 @@ class Settings(BaseSettings):
             raise ValueError(f"Value must be >= 0, got {v}")
         return v
 
-    @field_validator("massive_timeout_seconds", "sse_redis_socket_timeout", "sse_redis_connect_timeout", "clerk_jwks_fetch_timeout")
+    @field_validator(
+        "massive_timeout_seconds",
+        "schwab_timeout_seconds",
+        "sse_redis_socket_timeout",
+        "sse_redis_connect_timeout",
+        "clerk_jwks_fetch_timeout",
+    )
     @classmethod
     def validate_positive_floats(cls, value: float) -> float:
         v = float(value)
@@ -795,6 +813,10 @@ class Settings(BaseSettings):
                 raise ValueError("MASSIVE_BASE_URL must use HTTPS in production.")
             if self.massive_flatfiles_base_url and not self.massive_flatfiles_base_url.startswith("https://"):
                 raise ValueError("MASSIVE_FLATFILES_BASE_URL must use HTTPS in production.")
+            if not self.schwab_base_url.startswith("https://"):
+                raise ValueError("SCHWAB_BASE_URL must use HTTPS in production.")
+            if not self.schwab_auth_base_url.startswith("https://"):
+                raise ValueError("SCHWAB_AUTH_BASE_URL must use HTTPS in production.")
             if "backtestforecast:backtestforecast" in self.database_url:
                 raise ValueError(
                     "DATABASE_URL contains the default password 'backtestforecast:backtestforecast'. "

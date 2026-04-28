@@ -61,6 +61,7 @@ postgres_data
 redis_data
 
 # Secrets / certificates
+.secrets/
 *.pem
 *.key
 
