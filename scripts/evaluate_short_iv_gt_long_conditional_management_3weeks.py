@@ -139,6 +139,7 @@ BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN3_WORST_METHOD_SKIP_METHOD_CAP12_PNL_OV
 BEST_COMBINED_SOURCE_BASKET_CLOSE_70_POLICY_LABEL = (
     f"{BEST_COMBINED_METHOD_SIDE_EXIT_POLICY_LABEL}__basket_close_70"
 )
+BEST_COMBINED_BASKET_CLOSE_SOURCE_POLICY_LABEL = BEST_COMBINED_METHOD_SIDE_EXIT_POLICY_LABEL
 BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN3_WORST_METHOD_SKIP_VIX_ABS_GT_10_HALF_SIZE_POLICY_LABEL = (
     f"{BEST_COMBINED_TOP43_SYMBOL_MEDIAN_ROI_MIN3_WORST_METHOD_SKIP_POLICY_LABEL}"
     "__vix_abs_weekly_change_gt_10_half_size"
@@ -257,7 +258,7 @@ DEFAULT_TOP43_ABSTAIN_CAP = 29
 DEFAULT_TOP43_METHOD_CAP = 12
 DEFAULT_LOOKBACK_PNL_OVER_DEBIT_THRESHOLD_PCT = 15.0
 DEFAULT_LOOKBACK_PNL_OVER_DEBIT_MIN_HISTORY_TRADES = 5
-DEFAULT_BASKET_CLOSE_THRESHOLD_PCT = 70.0
+DEFAULT_BASKET_CLOSE_THRESHOLD_PCT: float | None = 70.0
 DEFAULT_VIX_MAX_WEEKLY_CHANGE_UP_PCT: float | None = None
 DEFAULT_MIN_SHORT_OVER_LONG_IV_PREMIUM_PCT: float | None = None
 TIGHT_METHOD_CAPS_10_10_2 = {"mlgbp72": 10, "mlgb76": 10, "median40rsi": 2}
@@ -1646,6 +1647,22 @@ def _derive_weekly_basket_close_policy_rows(
     return derived_rows
 
 
+def _copy_policy_rows(
+    *,
+    rows: list[dict[str, object]],
+    source_policy_label: str,
+    derived_policy_label: str,
+) -> list[dict[str, object]]:
+    derived_rows: list[dict[str, object]] = []
+    for row in rows:
+        if str(row["policy_label"]) != source_policy_label:
+            continue
+        candidate = dict(row)
+        candidate["policy_label"] = derived_policy_label
+        derived_rows.append(candidate)
+    return derived_rows
+
+
 def _derive_stress_method_half_size_policy_rows(
     *,
     rows: list[dict[str, object]],
@@ -2496,21 +2513,30 @@ def main() -> int:
             min_pnl_over_debit_pct=DEFAULT_LOOKBACK_PNL_OVER_DEBIT_THRESHOLD_PCT,
         )
     )
-    engine = create_engine(mgmt._load_database_url())
-    SessionLocal = sessionmaker(bind=engine)
-    try:
-        with SessionLocal() as session:
-            detail_rows.extend(
-                _derive_weekly_basket_close_policy_rows(
-                    rows=detail_rows,
-                    source_policy_label=BEST_COMBINED_METHOD_SIDE_EXIT_POLICY_LABEL,
-                    derived_policy_label=BEST_COMBINED_SOURCE_BASKET_CLOSE_70_POLICY_LABEL,
-                    threshold_pct=DEFAULT_BASKET_CLOSE_THRESHOLD_PCT,
-                    session=session,
-                )
+    if DEFAULT_BASKET_CLOSE_THRESHOLD_PCT is None:
+        detail_rows.extend(
+            _copy_policy_rows(
+                rows=detail_rows,
+                source_policy_label=BEST_COMBINED_BASKET_CLOSE_SOURCE_POLICY_LABEL,
+                derived_policy_label=BEST_COMBINED_SOURCE_BASKET_CLOSE_70_POLICY_LABEL,
             )
-    finally:
-        engine.dispose()
+        )
+    else:
+        engine = create_engine(mgmt._load_database_url())
+        SessionLocal = sessionmaker(bind=engine)
+        try:
+            with SessionLocal() as session:
+                detail_rows.extend(
+                    _derive_weekly_basket_close_policy_rows(
+                        rows=detail_rows,
+                        source_policy_label=BEST_COMBINED_BASKET_CLOSE_SOURCE_POLICY_LABEL,
+                        derived_policy_label=BEST_COMBINED_SOURCE_BASKET_CLOSE_70_POLICY_LABEL,
+                        threshold_pct=DEFAULT_BASKET_CLOSE_THRESHOLD_PCT,
+                        session=session,
+                    )
+                )
+        finally:
+            engine.dispose()
     detail_rows.extend(
         _derive_targeted_replacement_policy_rows(
             rows=detail_rows,
